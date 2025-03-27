@@ -51,12 +51,101 @@ class Database:
     def get_tasks(self, user_id: int) -> List[Task]:
         partner_id = self.get_partner_id(user_id)
         
+        # Получаем ВСЕ задачи, связанные с пользователем и партнёром
         self.cursor.execute("""
         SELECT id, title, description, task_type, status, created_by, created_at
         FROM tasks
-        WHERE (created_by = ? OR created_by = ?) AND (task_type = ? OR task_type = ? OR task_type = ?)
+        WHERE created_by = ? OR created_by = ?
         ORDER BY created_at DESC
-        """, (user_id, partner_id, TaskType.FOR_ME.value, TaskType.FOR_PARTNER.value, TaskType.FOR_BOTH.value))
+        """, (user_id, partner_id or -1))  # Используем -1 если партнёра нет
+        
+        tasks = []
+        for row in self.cursor.fetchall():
+            task = Task(
+                id=row[0],
+                title=row[1],
+                description=row[2],
+                task_type=TaskType(row[3]),
+                status=TaskStatus(row[4]),
+                created_by=row[5],
+                created_at=datetime.fromisoformat(row[6])
+            )
+            tasks.append(task)
+        
+        return tasks
+    
+    def get_user_tasks(self, user_id: int) -> List[Task]:
+        """Получает задачи, которые предназначены для пользователя"""
+        partner_id = self.get_partner_id(user_id)
+        if not partner_id:
+            partner_id = -1  # Используем -1 если партнёра нет
+        
+        self.cursor.execute("""
+        SELECT id, title, description, task_type, status, created_by, created_at
+        FROM tasks
+        WHERE (created_by = ? AND task_type = ?) OR
+            (created_by = ? AND task_type = ?) OR
+            (task_type = ?)
+        ORDER BY created_at DESC
+        """, (user_id, TaskType.FOR_ME.value, 
+            partner_id, TaskType.FOR_PARTNER.value, 
+            TaskType.FOR_BOTH.value))
+        
+        tasks = []
+        for row in self.cursor.fetchall():
+            task = Task(
+                id=row[0],
+                title=row[1],
+                description=row[2],
+                task_type=TaskType(row[3]),
+                status=TaskStatus(row[4]),
+                created_by=row[5],
+                created_at=datetime.fromisoformat(row[6])
+            )
+            tasks.append(task)
+        
+        return tasks
+    
+    def get_partner_tasks(self, user_id: int) -> List[Task]:
+        """Получает задачи, которые предназначены для партнёра"""
+        partner_id = self.get_partner_id(user_id)
+        if not partner_id:
+            return []  # Если партнёра нет, то и задач для него нет
+        
+        self.cursor.execute("""
+        SELECT id, title, description, task_type, status, created_by, created_at
+        FROM tasks
+        WHERE (created_by = ? AND task_type = ?) OR
+            (created_by = ? AND task_type = ?) 
+        ORDER BY created_at DESC
+        """, (user_id, TaskType.FOR_PARTNER.value, 
+            partner_id, TaskType.FOR_ME.value))
+        
+        tasks = []
+        for row in self.cursor.fetchall():
+            task = Task(
+                id=row[0],
+                title=row[1],
+                description=row[2],
+                task_type=TaskType(row[3]),
+                status=TaskStatus(row[4]),
+                created_by=row[5],
+                created_at=datetime.fromisoformat(row[6])
+            )
+            tasks.append(task)
+        
+        return tasks
+    
+    def get_common_tasks(self, user_id: int) -> List[Task]:
+        """Получает общие задачи"""
+        partner_id = self.get_partner_id(user_id)
+        
+        self.cursor.execute("""
+        SELECT id, title, description, task_type, status, created_by, created_at
+        FROM tasks
+        WHERE task_type = ? AND (created_by = ? OR created_by = ?)
+        ORDER BY created_at DESC
+        """, (TaskType.FOR_BOTH.value, user_id, partner_id or -1))
         
         tasks = []
         for row in self.cursor.fetchall():

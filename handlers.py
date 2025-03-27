@@ -163,13 +163,8 @@ def get_task_type_text(task_type: TaskType) -> str:
 @router.message(F.text == "📋 Мои задачи")
 async def show_my_tasks(message: Message):
     user_id = message.from_user.id
-    tasks = db.get_tasks(user_id)
     
-    # Фильтруем задачи, оставляя только задачи для пользователя
-    my_tasks = [task for task in tasks if 
-                (task.created_by == user_id and task.task_type == TaskType.FOR_ME) or
-                (task.created_by != user_id and task.task_type == TaskType.FOR_PARTNER) or
-                (task.task_type == TaskType.FOR_BOTH)]
+    my_tasks = db.get_user_tasks(user_id)
     
     if not my_tasks:
         await message.answer("У вас пока нет задач.")
@@ -184,12 +179,9 @@ async def show_my_tasks(message: Message):
 @router.message(F.text == "🔄 Задачи партнера")
 async def show_partner_tasks(message: Message):
     user_id = message.from_user.id
-    tasks = db.get_tasks(user_id)
     
-    # Фильтруем задачи, оставляя только задачи для партнера
-    partner_tasks = [task for task in tasks if 
-                     (task.created_by == user_id and task.task_type == TaskType.FOR_PARTNER) or
-                     (task.created_by != user_id and task.task_type == TaskType.FOR_ME)]
+    # Напрямую получаем задачи партнёра:
+    partner_tasks = db.get_partner_tasks(user_id)
     
     if not partner_tasks:
         await message.answer("У вашего партнера пока нет задач.")
@@ -204,10 +196,9 @@ async def show_partner_tasks(message: Message):
 @router.message(F.text == "👫 Общие задачи")
 async def show_common_tasks(message: Message):
     user_id = message.from_user.id
-    tasks = db.get_tasks(user_id)
     
-    # Фильтруем задачи, оставляя только общие задачи
-    common_tasks = [task for task in tasks if task.task_type == TaskType.FOR_BOTH]
+    # Напрямую получаем общие задачи:
+    common_tasks = db.get_common_tasks(user_id)
     
     if not common_tasks:
         await message.answer("У вас пока нет общих задач.")
@@ -508,24 +499,17 @@ async def change_page(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     context = data.get("task_context", "my_tasks")
     
-    # Получаем задачи
+    # Получаем задачи в зависимости от контекста
     user_id = callback.from_user.id
-    tasks = db.get_tasks(user_id)
     
-    # Фильтруем задачи зависимо от контекста - такой же код как в back_to_tasks
     if context == "my_tasks":
-        filtered_tasks = [task for task in tasks if 
-                    (task.created_by == user_id and task.task_type == TaskType.FOR_ME) or
-                    (task.created_by != user_id and task.task_type == TaskType.FOR_PARTNER) or
-                    (task.task_type == TaskType.FOR_BOTH)]
+        filtered_tasks = db.get_user_tasks(user_id)
     elif context == "partner_tasks":
-        filtered_tasks = [task for task in tasks if 
-                    (task.created_by == user_id and task.task_type == TaskType.FOR_PARTNER) or
-                    (task.created_by != user_id and task.task_type == TaskType.FOR_ME)]
+        filtered_tasks = db.get_partner_tasks(user_id)
     elif context == "common_tasks":
-        filtered_tasks = [task for task in tasks if task.task_type == TaskType.FOR_BOTH]
+        filtered_tasks = db.get_common_tasks(user_id)
     else:
-        filtered_tasks = tasks
+        filtered_tasks = db.get_tasks(user_id)
     
     await callback.message.edit_reply_markup(
         reply_markup=get_tasks_list_keyboard(filtered_tasks, page, context=context)
@@ -553,27 +537,20 @@ async def back_to_tasks(callback: CallbackQuery, state: FSMContext):
     # На всякий случай обновляем контекст в стейте
     await state.update_data(task_context=context)
     
-    # Получаем задачи
+    # Получаем задачи в зависимости от контекста
     user_id = callback.from_user.id
-    tasks = db.get_tasks(user_id)
     
-    # Фильтруем задачи в зависимости от контекста
     if context == "my_tasks":
-        filtered_tasks = [task for task in tasks if 
-                    (task.created_by == user_id and task.task_type == TaskType.FOR_ME) or
-                    (task.created_by != user_id and task.task_type == TaskType.FOR_PARTNER) or
-                    (task.task_type == TaskType.FOR_BOTH)]
+        filtered_tasks = db.get_user_tasks(user_id)
         title = "📋 Ваши задачи:"
     elif context == "partner_tasks":
-        filtered_tasks = [task for task in tasks if 
-                    (task.created_by == user_id and task.task_type == TaskType.FOR_PARTNER) or
-                    (task.created_by != user_id and task.task_type == TaskType.FOR_ME)]
+        filtered_tasks = db.get_partner_tasks(user_id)
         title = "🔄 Задачи вашего партнера:"
     elif context == "common_tasks":
-        filtered_tasks = [task for task in tasks if task.task_type == TaskType.FOR_BOTH]
+        filtered_tasks = db.get_common_tasks(user_id)
         title = "👫 Общие задачи:"
     else:
-        filtered_tasks = tasks
+        filtered_tasks = db.get_tasks(user_id)
         title = "📋 Все задачи:"
     
     # Показываем отфильтрованный список задач
