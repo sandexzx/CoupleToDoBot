@@ -85,11 +85,11 @@ class Database:
         FROM tasks
         WHERE (created_by = ? AND task_type = ?) OR
             (created_by = ? AND task_type = ?) OR
-            (task_type = ?)
+            (task_type = ? AND (created_by = ? OR created_by = ?))
         ORDER BY created_at DESC
         """, (user_id, TaskType.FOR_ME.value, 
             partner_id, TaskType.FOR_PARTNER.value, 
-            TaskType.FOR_BOTH.value))
+            TaskType.FOR_BOTH.value, user_id, partner_id))
         
         tasks = []
         for row in self.cursor.fetchall():

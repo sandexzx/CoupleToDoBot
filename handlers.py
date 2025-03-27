@@ -1,3 +1,4 @@
+import logging
 from aiogram import Router, F, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -130,19 +131,24 @@ async def process_task_type(callback: CallbackQuery, state: FSMContext):
     
     # Очищаем состояние
     await state.clear()
-    
+
     # Отправляем уведомление партнеру, если задача для него или для обоих
     if task.task_type in [TaskType.FOR_PARTNER, TaskType.FOR_BOTH]:
         partner_id = db.get_partner_id(callback.from_user.id)
         if partner_id:
-            # Отправляем уведомление партнеру
-            await callback.bot.send_message(
-                partner_id,
-                f"🔔 У вас новая задача от партнера!\n\n"
-                f"📌 Название: {title}\n"
-                f"📝 Описание: {description or 'Нет описания'}\n"
-                f"👥 Тип: {get_task_type_text(TaskType(task_type))}"
-            )
+            try:
+                # Отправляем уведомление партнеру
+                await callback.bot.send_message(
+                    partner_id,
+                    f"🔔 У вас новая задача от партнера!\n\n"
+                    f"📌 Название: {title}\n"
+                    f"📝 Описание: {description or 'Нет описания'}\n"
+                    f"👥 Тип: {get_task_type_text(TaskType(task_type))}"
+                )
+                await callback.answer("✅ Уведомление партнеру отправлено!")
+            except Exception as e:
+                logging.error(f"Ошибка при отправке уведомления партнеру: {e}")
+                await callback.answer("⚠️ Не удалось отправить уведомление партнеру")
     
     # Отправляем клавиатуру главного меню
     await callback.message.answer(
@@ -265,6 +271,20 @@ async def change_task_status(callback: CallbackQuery, state: FSMContext):
     # Обновляем статус задачи
     task.status = new_status
     db.update_task(task)
+
+    # Уведомляем партнера об изменении статуса задачи, если она имеет отношение к нему
+    if task.task_type in [TaskType.FOR_PARTNER, TaskType.FOR_BOTH] and task.created_by == callback.from_user.id:
+        partner_id = db.get_partner_id(callback.from_user.id)
+        if partner_id:
+            try:
+                status_text = "выполнена ✅" if task.status == TaskStatus.COMPLETED else "возвращена в активные 🔄"
+                await callback.bot.send_message(
+                    partner_id,
+                    f"🔔 Обновление статуса задачи!"
+                    f"📌 Задача \"{task.title}\" {status_text}"
+                )
+            except Exception as e:
+                logging.error(f"Ошибка при отправке уведомления об изменении статуса: {e}")
     
     await callback.answer(f"Статус задачи изменен на: {new_status.value}")
     
