@@ -25,7 +25,7 @@ def get_task_type_keyboard() -> InlineKeyboardMarkup:
     
     return builder.as_markup()
 
-def get_task_action_keyboard(task_id: int, task_status: TaskStatus) -> InlineKeyboardMarkup:
+def get_task_action_keyboard(task_id: int, task_status: TaskStatus, context: str = "my_tasks") -> InlineKeyboardMarkup:
     # Клавиатура для действий с задачей (просмотр, редактирование, удаление)
     builder = InlineKeyboardBuilder()
     
@@ -37,14 +37,14 @@ def get_task_action_keyboard(task_id: int, task_status: TaskStatus) -> InlineKey
     builder.button(text=status_text, callback_data=f"task_status:{task_id}:{status_value}")
     builder.button(text="✏️ Редактировать", callback_data=f"edit_task:{task_id}")
     builder.button(text="🗑️ Удалить", callback_data=f"delete_task:{task_id}")
-    builder.button(text="⬅️ Назад", callback_data="back_to_tasks")
+    builder.button(text="⬅️ Назад", callback_data=f"back_to_tasks:{context}")
     
     # Размещаем кнопки в один столбец
     builder.adjust(1)
     
     return builder.as_markup()
 
-def get_tasks_list_keyboard(tasks, page=0, page_size=5) -> InlineKeyboardMarkup:
+def get_tasks_list_keyboard(tasks, page=0, page_size=5, context="my_tasks") -> InlineKeyboardMarkup:
     # Пагинация для списка задач
     builder = InlineKeyboardBuilder()
     
@@ -59,7 +59,7 @@ def get_tasks_list_keyboard(tasks, page=0, page_size=5) -> InlineKeyboardMarkup:
         title_display = task.title[:30] + "..." if len(task.title) > 30 else task.title
         builder.button(
             text=f"{status_emoji} {title_display}", 
-            callback_data=f"view_task:{task.id}"
+            callback_data=f"view_task:{task.id}:{context}"
         )
     
     # Размещаем кнопки задач в один столбец
@@ -102,13 +102,13 @@ def get_confirm_keyboard(action: str, task_id: int) -> InlineKeyboardMarkup:
     
     return builder.as_markup()
 
-def get_edit_menu_keyboard(task_id: int) -> InlineKeyboardMarkup:
+def get_edit_menu_keyboard(task_id: int, context: str = "my_tasks") -> InlineKeyboardMarkup:
     # Клавиатура для меню редактирования задачи
     builder = InlineKeyboardBuilder()
     builder.button(text="📌 Название", callback_data="edit:title")
     builder.button(text="📝 Описание", callback_data="edit:description")
     builder.button(text="👥 Тип задачи", callback_data="edit:type")
-    builder.button(text="🔙 Назад", callback_data=f"view_task:{task_id}")
+    builder.button(text="🔙 Назад", callback_data=f"view_task:{task_id}:{context}")
     
     # Размещаем кнопки в один столбец
     builder.adjust(1)

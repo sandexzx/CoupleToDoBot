@@ -177,7 +177,7 @@ async def show_my_tasks(message: Message):
     
     await message.answer(
         "📋 Ваши задачи:",
-        reply_markup=get_tasks_list_keyboard(my_tasks)
+        reply_markup=get_tasks_list_keyboard(my_tasks, context="my_tasks")
     )
 
 # Обработчик кнопки "Задачи партнера"
@@ -197,7 +197,7 @@ async def show_partner_tasks(message: Message):
     
     await message.answer(
         "🔄 Задачи вашего партнера:",
-        reply_markup=get_tasks_list_keyboard(partner_tasks)
+        reply_markup=get_tasks_list_keyboard(partner_tasks, context="partner_tasks")
     )
 
 # Обработчик кнопки "Общие задачи"
@@ -215,12 +215,19 @@ async def show_common_tasks(message: Message):
     
     await message.answer(
         "👫 Общие задачи:",
-        reply_markup=get_tasks_list_keyboard(common_tasks))
+        reply_markup=get_tasks_list_keyboard(common_tasks, context="common_tasks")
+    )
 
 # Обработчик просмотра задачи
 @router.callback_query(F.data.startswith("view_task:"))
-async def view_task(callback: CallbackQuery):
-    task_id = int(callback.data.split(":")[1])
+async def view_task(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":")
+    task_id = int(parts[1])
+    context = parts[2] if len(parts) > 2 else "my_tasks"
+    
+    # Сохраняем контекст в стейт
+    await state.update_data(task_context=context)
+    
     task = db.get_task(task_id)
     
     if not task:
@@ -245,15 +252,19 @@ async def view_task(callback: CallbackQuery):
     
     await callback.message.edit_text(
         task_info,
-        reply_markup=get_task_action_keyboard(task.id, task.status)
+        reply_markup=get_task_action_keyboard(task.id, task.status, context)
     )
 
 # Обработчик изменения статуса задачи
 @router.callback_query(F.data.startswith("task_status:"))
-async def change_task_status(callback: CallbackQuery):
+async def change_task_status(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.split(":")
     task_id = int(parts[1])
     new_status = TaskStatus(parts[2])
+    
+    # Получаем контекст из стейта
+    data = await state.get_data()
+    context = data.get("task_context", "my_tasks")
     
     task = db.get_task(task_id)
     if not task:
@@ -266,13 +277,39 @@ async def change_task_status(callback: CallbackQuery):
     
     await callback.answer(f"Статус задачи изменен на: {new_status.value}")
     
-    # Обновляем информацию о задаче
-    await view_task(callback)
+    # Получаем обновленную задачу и показываем
+    task = db.get_task(task_id)
+    
+    # Формируем статус задачи
+    status_text = "✅ Выполнена" if task.status == TaskStatus.COMPLETED else "🔄 Активна"
+    
+    # Определяем, кто создал задачу
+    creator_text = "Вы" if task.created_by == callback.from_user.id else "Ваш партнер"
+    
+    # Формируем текст с информацией о задаче
+    task_info = (
+        f"📌 Название: {task.title}\n"
+        f"📝 Описание: {task.description or 'Нет описания'}\n"
+        f"👥 Тип: {get_task_type_text(task.task_type)}\n"
+        f"🚦 Статус: {status_text}\n"
+        f"👤 Создатель: {creator_text}\n"
+        f"📅 Создана: {task.created_at.strftime('%d.%m.%Y %H:%M')}"
+    )
+    
+    await callback.message.edit_text(
+        task_info,
+        reply_markup=get_task_action_keyboard(task.id, task.status, context)
+    )
 
 # Обработчик редактирования задачи
 @router.callback_query(F.data.startswith("edit_task:"))
 async def edit_task(callback: CallbackQuery, state: FSMContext):
     task_id = int(callback.data.split(":")[1])
+    
+    # Получаем контекст из стейта
+    data = await state.get_data()
+    context = data.get("task_context", "my_tasks")
+    
     task = db.get_task(task_id)
     
     if not task:
@@ -285,7 +322,7 @@ async def edit_task(callback: CallbackQuery, state: FSMContext):
     # Показываем меню редактирования с новой клавиатурой
     await callback.message.edit_text(
         "✏️ Что вы хотите изменить?",
-        reply_markup=get_edit_menu_keyboard(task_id)
+        reply_markup=get_edit_menu_keyboard(task_id, context)
     )
 
 # Обработчик выбора поля для редактирования
@@ -463,31 +500,35 @@ async def delete_task(callback: CallbackQuery):
 
 # Обработчик переключения страниц в списке задач
 @router.callback_query(F.data.startswith("page:"))
-async def change_page(callback: CallbackQuery):
-    page = int(callback.data.split(":")[1])
+async def change_page(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":")
+    page = int(parts[1])
+    
+    # Получаем сохраненный контекст
+    data = await state.get_data()
+    context = data.get("task_context", "my_tasks")
     
     # Получаем задачи
     user_id = callback.from_user.id
     tasks = db.get_tasks(user_id)
     
-    # Определяем, какие задачи показывать
-    text = callback.message.text
-    if "Ваши задачи" in text:
+    # Фильтруем задачи зависимо от контекста - такой же код как в back_to_tasks
+    if context == "my_tasks":
         filtered_tasks = [task for task in tasks if 
-                        (task.created_by == user_id and task.task_type == TaskType.FOR_ME) or
-                        (task.created_by != user_id and task.task_type == TaskType.FOR_PARTNER) or
-                        (task.task_type == TaskType.FOR_BOTH)]
-    elif "Задачи вашего партнера" in text:
+                    (task.created_by == user_id and task.task_type == TaskType.FOR_ME) or
+                    (task.created_by != user_id and task.task_type == TaskType.FOR_PARTNER) or
+                    (task.task_type == TaskType.FOR_BOTH)]
+    elif context == "partner_tasks":
         filtered_tasks = [task for task in tasks if 
-                        (task.created_by == user_id and task.task_type == TaskType.FOR_PARTNER) or
-                        (task.created_by != user_id and task.task_type == TaskType.FOR_ME)]
-    elif "Общие задачи" in text:
+                    (task.created_by == user_id and task.task_type == TaskType.FOR_PARTNER) or
+                    (task.created_by != user_id and task.task_type == TaskType.FOR_ME)]
+    elif context == "common_tasks":
         filtered_tasks = [task for task in tasks if task.task_type == TaskType.FOR_BOTH]
     else:
         filtered_tasks = tasks
     
     await callback.message.edit_reply_markup(
-        reply_markup=get_tasks_list_keyboard(filtered_tasks, page)
+        reply_markup=get_tasks_list_keyboard(filtered_tasks, page, context=context)
     )
 
 # Обработчик кнопки "Главное меню"
@@ -503,16 +544,42 @@ async def return_to_main_menu(callback: CallbackQuery):
     )
 
 # Обработчик кнопки "Назад к задачам"
-@router.callback_query(F.data == "back_to_tasks")
-async def back_to_tasks(callback: CallbackQuery):
+@router.callback_query(F.data.startswith("back_to_tasks"))
+async def back_to_tasks(callback: CallbackQuery, state: FSMContext):
+    # Получаем контекст из колбэка или из стейта
+    parts = callback.data.split(":")
+    context = parts[1] if len(parts) > 1 else "my_tasks"
+    
+    # На всякий случай обновляем контекст в стейте
+    await state.update_data(task_context=context)
+    
     # Получаем задачи
     user_id = callback.from_user.id
     tasks = db.get_tasks(user_id)
     
-    # Показываем список задач
+    # Фильтруем задачи в зависимости от контекста
+    if context == "my_tasks":
+        filtered_tasks = [task for task in tasks if 
+                    (task.created_by == user_id and task.task_type == TaskType.FOR_ME) or
+                    (task.created_by != user_id and task.task_type == TaskType.FOR_PARTNER) or
+                    (task.task_type == TaskType.FOR_BOTH)]
+        title = "📋 Ваши задачи:"
+    elif context == "partner_tasks":
+        filtered_tasks = [task for task in tasks if 
+                    (task.created_by == user_id and task.task_type == TaskType.FOR_PARTNER) or
+                    (task.created_by != user_id and task.task_type == TaskType.FOR_ME)]
+        title = "🔄 Задачи вашего партнера:"
+    elif context == "common_tasks":
+        filtered_tasks = [task for task in tasks if task.task_type == TaskType.FOR_BOTH]
+        title = "👫 Общие задачи:"
+    else:
+        filtered_tasks = tasks
+        title = "📋 Все задачи:"
+    
+    # Показываем отфильтрованный список задач
     await callback.message.edit_text(
-        "📋 Ваши задачи:",
-        reply_markup=get_tasks_list_keyboard(tasks)
+        title,
+        reply_markup=get_tasks_list_keyboard(filtered_tasks, context=context)
     )
 
 # Обработчик кнопки "Отмена"
