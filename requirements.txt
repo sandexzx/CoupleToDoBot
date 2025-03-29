@@ -1,0 +1,2 @@
+aiogram
+SQLite3
