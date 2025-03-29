@@ -1,6 +1,6 @@
 import sqlite3
 from typing import List, Optional
-from models import Task, TaskType, TaskStatus
+from models import Task, TaskType, TaskStatus, Wish, WishType
 from datetime import datetime
 import json
 
@@ -25,6 +25,18 @@ class Database:
             description TEXT,
             task_type TEXT NOT NULL,
             status TEXT NOT NULL,
+            created_by INTEGER NOT NULL,
+            created_at TIMESTAMP NOT NULL
+        )
+        """)
+
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS wishes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            description TEXT,
+            image_id TEXT,
+            wish_type TEXT NOT NULL,
             created_by INTEGER NOT NULL,
             created_at TIMESTAMP NOT NULL
         )
@@ -194,5 +206,123 @@ class Database:
         
     def delete_task(self, task_id: int) -> bool:
         self.cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        self.connection.commit()
+        return self.cursor.rowcount > 0
+
+    def add_wish(self, wish: Wish) -> int:
+        self.cursor.execute("""
+        INSERT INTO wishes (title, description, image_id, wish_type, created_by, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """, (wish.title, wish.description, wish.image_id, wish.wish_type.value, wish.created_by, wish.created_at))
+        self.connection.commit()
+        return self.cursor.lastrowid
+        
+    def get_wishes(self, user_id: int) -> List[Wish]:
+        partner_id = self.get_partner_id(user_id)
+        
+        self.cursor.execute("""
+        SELECT id, title, description, image_id, wish_type, created_by, created_at
+        FROM wishes
+        WHERE created_by = ? OR created_by = ?
+        ORDER BY created_at DESC
+        """, (user_id, partner_id or -1))
+        
+        wishes = []
+        for row in self.cursor.fetchall():
+            wish = Wish(
+                id=row[0],
+                title=row[1],
+                description=row[2],
+                image_id=row[3],
+                wish_type=WishType(row[4]),
+                created_by=row[5],
+                created_at=datetime.fromisoformat(row[6])
+            )
+            wishes.append(wish)
+        
+        return wishes
+        
+    def get_my_wishes(self, user_id: int) -> List[Wish]:
+        self.cursor.execute("""
+        SELECT id, title, description, image_id, wish_type, created_by, created_at
+        FROM wishes
+        WHERE created_by = ? AND wish_type = ?
+        ORDER BY created_at DESC
+        """, (user_id, WishType.MY_WISH.value))
+        
+        wishes = []
+        for row in self.cursor.fetchall():
+            wish = Wish(
+                id=row[0],
+                title=row[1],
+                description=row[2],
+                image_id=row[3],
+                wish_type=WishType(row[4]),
+                created_by=row[5],
+                created_at=datetime.fromisoformat(row[6])
+            )
+            wishes.append(wish)
+        
+        return wishes
+        
+    def get_partner_wishes(self, user_id: int) -> List[Wish]:
+        partner_id = self.get_partner_id(user_id)
+        if not partner_id:
+            return []
+        
+        self.cursor.execute("""
+        SELECT id, title, description, image_id, wish_type, created_by, created_at
+        FROM wishes
+        WHERE created_by = ? AND wish_type = ?
+        ORDER BY created_at DESC
+        """, (partner_id, WishType.MY_WISH.value))
+        
+        wishes = []
+        for row in self.cursor.fetchall():
+            wish = Wish(
+                id=row[0],
+                title=row[1],
+                description=row[2],
+                image_id=row[3],
+                wish_type=WishType(row[4]),
+                created_by=row[5],
+                created_at=datetime.fromisoformat(row[6])
+            )
+            wishes.append(wish)
+        
+        return wishes
+        
+    def get_wish(self, wish_id: int) -> Optional[Wish]:
+        self.cursor.execute("""
+        SELECT id, title, description, image_id, wish_type, created_by, created_at
+        FROM wishes
+        WHERE id = ?
+        """, (wish_id,))
+        
+        row = self.cursor.fetchone()
+        if not row:
+            return None
+            
+        return Wish(
+            id=row[0],
+            title=row[1],
+            description=row[2],
+            image_id=row[3],
+            wish_type=WishType(row[4]),
+            created_by=row[5],
+            created_at=datetime.fromisoformat(row[6])
+        )
+        
+    def update_wish(self, wish: Wish) -> bool:
+        self.cursor.execute("""
+        UPDATE wishes
+        SET title = ?, description = ?, image_id = ?, wish_type = ?
+        WHERE id = ?
+        """, (wish.title, wish.description, wish.image_id, wish.wish_type.value, wish.id))
+        self.connection.commit()
+        return self.cursor.rowcount > 0
+        
+    def delete_wish(self, wish_id: int) -> bool:
+        self.cursor.execute("DELETE FROM wishes WHERE id = ?", (wish_id,))
         self.connection.commit()
         return self.cursor.rowcount > 0

@@ -5,13 +5,14 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from models import Task, TaskType, TaskStatus, Wish, WishType
 
 from config import ADMIN_IDS
-from models import Task, TaskType, TaskStatus
 from database import Database
 from keyboards import (
     get_edit_menu_keyboard, get_main_keyboard, get_task_type_keyboard, get_task_action_keyboard,
-    get_tasks_list_keyboard, get_cancel_keyboard, get_confirm_keyboard
+    get_tasks_list_keyboard, get_cancel_keyboard, get_confirm_keyboard, get_wish_type_keyboard, 
+    get_wishes_list_keyboard, get_wishes_list_keyboard, get_wish_action_keyboard, get_edit_wish_menu_keyboard
 )
 
 router = Router()
@@ -25,6 +26,17 @@ class TaskStates(StatesGroup):
     
     edit_title = State()
     edit_description = State()
+    edit_type = State()
+
+class WishStates(StatesGroup):
+    waiting_for_title = State()
+    waiting_for_description = State()
+    waiting_for_image = State()
+    waiting_for_type = State()
+    
+    edit_title = State()
+    edit_description = State()
+    edit_image = State()
     edit_type = State()
 
 # Обработчик команды /start
@@ -598,18 +610,661 @@ async def cancel_action(callback: CallbackQuery, state: FSMContext):
         reply_markup=get_main_keyboard()
     )
 
+# Вспомогательная функция для получения текстового представления типа желания
+def get_wish_type_text(wish_type: WishType) -> str:
+    if wish_type == WishType.MY_WISH:
+        return "Моё желание"
+    else:
+        return "Желание партнёра"
+
+# Обработчик кнопки "Добавить желание"
+@router.message(F.text == "🎁 Добавить желание")
+async def add_wish(message: Message, state: FSMContext):
+    await message.answer(
+        "✏️ Введите название желания:",
+        reply_markup=get_cancel_keyboard()
+    )
+    await state.set_state(WishStates.waiting_for_title)
+
+# Обработчик ввода названия желания
+@router.message(WishStates.waiting_for_title)
+async def process_wish_title(message: Message, state: FSMContext):
+    # Сохраняем название желания
+    await state.update_data(title=message.text)
+    
+    await message.answer(
+        "📝 Введите описание желания (или отправьте '-' для пропуска):",
+        reply_markup=get_cancel_keyboard()
+    )
+    await state.set_state(WishStates.waiting_for_description)
+
+# Обработчик ввода описания желания
+@router.message(WishStates.waiting_for_description)
+async def process_wish_description(message: Message, state: FSMContext):
+    description = message.text
+    if description == "-":
+        description = ""
+    
+    # Сохраняем описание желания
+    await state.update_data(description=description)
+    
+    await message.answer(
+        "🖼️ Отправьте изображение, иллюстрирующее ваше желание (или отправьте '-' для пропуска):",
+        reply_markup=get_cancel_keyboard()
+    )
+    await state.set_state(WishStates.waiting_for_image)
+
+# Обработчик получения изображения для желания
+@router.message(WishStates.waiting_for_image, F.photo | (F.text == "-"))
+async def process_wish_image(message: Message, state: FSMContext):
+    image_id = None
+    
+    if message.photo:
+        # Берем самый большой размер фото (последний в списке)
+        image_id = message.photo[-1].file_id
+    
+    # Сохраняем ID изображения (или None, если изображение не было отправлено)
+    await state.update_data(image_id=image_id)
+    
+    await message.answer(
+        "👥 Выберите тип желания:",
+        reply_markup=get_wish_type_keyboard()
+    )
+    await state.set_state(WishStates.waiting_for_type)
+
+# Обработчик выбора типа желания
+@router.callback_query(WishStates.waiting_for_type, F.data.startswith("wish_type:"))
+async def process_wish_type(callback: CallbackQuery, state: FSMContext):
+    wish_type = callback.data.split(":")[1]
+    
+    # Получаем все данные из состояния
+    data = await state.get_data()
+    title = data.get("title")
+    description = data.get("description", "")
+    image_id = data.get("image_id")
+    
+    # Создаем новое желание
+    wish = Wish(
+        title=title,
+        description=description,
+        image_id=image_id,
+        wish_type=WishType(wish_type),
+        created_by=callback.from_user.id
+    )
+    
+    # Добавляем желание в базу данных
+    wish_id = db.add_wish(wish)
+    wish.id = wish_id
+    
+    # Отправляем сообщение об успешном создании желания
+    success_message = f"✅ Желание успешно создано!\n\n"
+    success_message += f"📌 Название: {title}\n"
+    success_message += f"📝 Описание: {description or 'Нет описания'}\n"
+    success_message += f"👥 Тип: {get_wish_type_text(WishType(wish_type))}"
+    
+    if image_id:
+        await callback.message.delete()
+        await callback.message.answer_photo(
+            photo=image_id,
+            caption=success_message
+        )
+    else:
+        await callback.message.edit_text(success_message)
+    
+    # Очищаем состояние
+    await state.clear()
+    
+    # Отправляем уведомление партнеру, если желание относится к Partner
+    if wish.wish_type == WishType.PARTNER_WISH:
+        partner_id = db.get_partner_id(callback.from_user.id)
+        if partner_id:
+            try:
+                # Отправляем уведомление партнеру
+                notification = f"🎁 {callback.from_user.first_name} добавил(а) новое желание для вас!\n\n"
+                notification += f"📌 Название: {title}\n"
+                notification += f"📝 Описание: {description or 'Нет описания'}"
+                
+                if image_id:
+                    await callback.bot.send_photo(
+                        partner_id,
+                        photo=image_id,
+                        caption=notification
+                    )
+                else:
+                    await callback.bot.send_message(
+                        partner_id,
+                        notification
+                    )
+                
+                await callback.answer("✅ Уведомление партнеру отправлено!")
+            except Exception as e:
+                logging.error(f"Ошибка при отправке уведомления партнеру: {e}")
+                await callback.answer("⚠️ Не удалось отправить уведомление партнеру")
+    
+    # Отправляем клавиатуру главного меню
+    await callback.message.answer(
+        "Что бы вы хотели сделать дальше?",
+        reply_markup=get_main_keyboard()
+    )
+
+# Обработчик кнопки "Мои желания"
+@router.message(F.text == "✨ Мои желания")
+async def show_my_wishes(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    
+    # Получаем желания пользователя
+    my_wishes = db.get_my_wishes(user_id)
+    
+    if not my_wishes:
+        await message.answer("У вас пока нет добавленных желаний.")
+        return
+    
+    # Сохраняем контекст
+    await state.update_data(wish_context="my_wishes")
+    
+    await message.answer(
+        "✨ Ваши желания:",
+        reply_markup=get_wishes_list_keyboard(my_wishes, context="my_wishes")
+    )
+
+# Обработчик кнопки "Желания партнёра"
+@router.message(F.text == "🎀 Желания партнёра")
+async def show_partner_wishes(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    
+    # Получаем желания партнёра
+    partner_wishes = db.get_partner_wishes(user_id)
+    
+    if not partner_wishes:
+        await message.answer("У вашего партнёра пока нет добавленных желаний.")
+        return
+    
+    # Сохраняем контекст
+    await state.update_data(wish_context="partner_wishes")
+    
+    await message.answer(
+        "🎀 Желания вашего партнёра:",
+        reply_markup=get_wishes_list_keyboard(partner_wishes, context="partner_wishes")
+    )
+
+# Обработчик просмотра желания
+@router.callback_query(F.data.startswith("view_wish:"))
+async def view_wish(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":")
+    wish_id = int(parts[1])
+    context = parts[2] if len(parts) > 2 else "my_wishes"
+    
+    # Сохраняем контекст в стейт
+    await state.update_data(wish_context=context)
+    
+    wish = db.get_wish(wish_id)
+    
+    if not wish:
+        await callback.answer("Желание не найдено. Возможно, оно было удалено.")
+        return
+    
+    # Определяем, кто создал желание
+    creator_text = "Вы" if wish.created_by == callback.from_user.id else "Ваш партнер"
+    
+    # Формируем текст с информацией о желании
+    wish_info = (
+        f"📌 Название: {wish.title}\n"
+        f"📝 Описание: {wish.description or 'Нет описания'}\n"
+        f"👥 Тип: {get_wish_type_text(wish.wish_type)}\n"
+        f"👤 Создатель: {creator_text}\n"
+        f"📅 Создано: {wish.created_at.strftime('%d.%m.%Y %H:%M')}"
+    )
+    
+    # Если есть изображение, отправляем его с информацией о желании
+    if wish.image_id:
+        # Удаляем предыдущее сообщение, если оно было
+        await callback.message.delete()
+        
+        # Отправляем фото с информацией
+        message = await callback.message.answer_photo(
+            photo=wish.image_id,
+            caption=wish_info,
+            reply_markup=get_wish_action_keyboard(wish.id, context)
+        )
+    else:
+        # Если изображения нет, просто редактируем текущее сообщение
+        await callback.message.edit_text(
+            wish_info,
+            reply_markup=get_wish_action_keyboard(wish.id, context)
+        )
+
+@router.callback_query(F.data.startswith("edit_wish:"))
+async def edit_wish(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":")
+    
+    if len(parts) == 2:
+        # Проверяем, можно ли преобразовать второй элемент в число
+        try:
+            # Если edit_wish:{wish_id}, то показываем меню редактирования
+            wish_id = int(parts[1])
+            
+            # Получаем контекст из стейта
+            data = await state.get_data()
+            context = data.get("wish_context", "my_wishes")
+            
+            wish = db.get_wish(wish_id)
+            
+            if not wish:
+                await callback.answer("Желание не найдено. Возможно, оно было удалено.")
+                return
+            
+            # Сохраняем данные о желании в состоянии
+            await state.update_data(wish_id=wish_id)
+            
+            # Проверяем, есть ли фото в сообщении
+            if callback.message.photo:
+                # Если есть фото, удаляем сообщение и отправляем новое текстовое
+                await callback.message.delete()
+                await callback.message.answer(
+                    "✏️ Что вы хотите изменить?",
+                    reply_markup=get_edit_wish_menu_keyboard(wish_id, context)
+                )
+            else:
+                # Если нет фото, можем просто редактировать текст
+                await callback.message.edit_text(
+                    "✏️ Что вы хотите изменить?",
+                    reply_markup=get_edit_wish_menu_keyboard(wish_id, context)
+                )
+        except ValueError:
+            # Если второй элемент не число, значит это редактирование поля
+            field = parts[1]
+            
+            # Получаем данные о желании
+            data = await state.get_data()
+            wish_id = data.get("wish_id")
+            wish = db.get_wish(wish_id)
+            
+            if not wish:
+                await callback.answer("Желание не найдено. Возможно, оно было удалено.")
+                return
+            
+            if field == "title":
+                await callback.message.edit_text(
+                    f"Текущее название: {wish.title}\n\n"
+                    f"Введите новое название:",
+                    reply_markup=get_cancel_keyboard()
+                )
+                await state.set_state(WishStates.edit_title)
+            
+            elif field == "description":
+                await callback.message.edit_text(
+                    f"Текущее описание: {wish.description or 'Нет описания'}\n\n"
+                    f"Введите новое описание (или отправьте '-' для удаления):",
+                    reply_markup=get_cancel_keyboard()
+                )
+                await state.set_state(WishStates.edit_description)
+            
+            elif field == "image":
+                await callback.message.edit_text(
+                    f"Отправьте новое изображение (или отправьте '-' для удаления текущего):",
+                    reply_markup=get_cancel_keyboard()
+                )
+                await state.set_state(WishStates.edit_image)
+            
+            elif field == "type":
+                await callback.message.edit_text(
+                    f"Текущий тип: {get_wish_type_text(wish.wish_type)}\n\n"
+                    f"Выберите новый тип желания:",
+                    reply_markup=get_wish_type_keyboard()
+                )
+                await state.set_state(WishStates.edit_type)
+    else:
+        # Если edit_wish:{field}, то начинаем редактирование поля
+        field = parts[1]
+        
+        # Получаем данные о желании
+        data = await state.get_data()
+        wish_id = data.get("wish_id")
+        wish = db.get_wish(wish_id)
+        
+        if not wish:
+            await callback.answer("Желание не найдено. Возможно, оно было удалено.")
+            return
+        
+        if field == "title":
+            await callback.message.edit_text(
+                f"Текущее название: {wish.title}\n\n"
+                f"Введите новое название:",
+                reply_markup=get_cancel_keyboard()
+            )
+            await state.set_state(WishStates.edit_title)
+        
+        elif field == "description":
+            await callback.message.edit_text(
+                f"Текущее описание: {wish.description or 'Нет описания'}\n\n"
+                f"Введите новое описание (или отправьте '-' для удаления):",
+                reply_markup=get_cancel_keyboard()
+            )
+            await state.set_state(WishStates.edit_description)
+        
+        elif field == "image":
+            await callback.message.edit_text(
+                f"Отправьте новое изображение (или отправьте '-' для удаления текущего):",
+                reply_markup=get_cancel_keyboard()
+            )
+            await state.set_state(WishStates.edit_image)
+        
+        elif field == "type":
+            await callback.message.edit_text(
+                f"Текущий тип: {get_wish_type_text(wish.wish_type)}\n\n"
+                f"Выберите новый тип желания:",
+                reply_markup=get_wish_type_keyboard()
+            )
+            await state.set_state(WishStates.edit_type)
+
+# Обработчик ввода нового названия желания
+@router.message(WishStates.edit_title)
+async def process_edit_wish_title(message: Message, state: FSMContext):
+    new_title = message.text
+    
+    # Получаем данные о желании
+    data = await state.get_data()
+    wish_id = data.get("wish_id")
+    wish = db.get_wish(wish_id)
+    
+    if not wish:
+        await message.answer("Желание не найдено. Возможно, оно было удалено.")
+        await state.clear()
+        return
+    
+    # Обновляем название желания
+    wish.title = new_title
+    db.update_wish(wish)
+    
+    await message.answer(f"✅ Название желания успешно обновлено!")
+    
+    # Очищаем состояние редактирования
+    await state.set_data({})
+    
+    # Показываем обновленную информацию о желании
+    wish_info = (
+        f"📌 Название: {wish.title}\n"
+        f"📝 Описание: {wish.description or 'Нет описания'}\n"
+        f"👥 Тип: {get_wish_type_text(wish.wish_type)}\n"
+        f"📅 Создано: {wish.created_at.strftime('%d.%m.%Y %H:%M')}"
+    )
+    
+    if wish.image_id:
+        await message.answer_photo(
+            photo=wish.image_id,
+            caption=wish_info,
+            reply_markup=get_wish_action_keyboard(wish.id)
+        )
+    else:
+        await message.answer(
+            wish_info,
+            reply_markup=get_wish_action_keyboard(wish.id)
+        )
+
+# Обработчик ввода нового описания желания
+@router.message(WishStates.edit_description)
+async def process_edit_wish_description(message: Message, state: FSMContext):
+    new_description = message.text
+    if new_description == "-":
+        new_description = ""
+    
+    # Получаем данные о желании
+    data = await state.get_data()
+    wish_id = data.get("wish_id")
+    wish = db.get_wish(wish_id)
+    
+    if not wish:
+        await message.answer("Желание не найдено. Возможно, оно было удалено.")
+        await state.clear()
+        return
+    
+    # Обновляем описание желания
+    wish.description = new_description
+    db.update_wish(wish)
+    
+    await message.answer(f"✅ Описание желания успешно обновлено!")
+    
+    # Очищаем состояние редактирования
+    await state.set_data({})
+    
+    # Показываем обновленную информацию о желании
+    wish_info = (
+        f"📌 Название: {wish.title}\n"
+        f"📝 Описание: {wish.description or 'Нет описания'}\n"
+        f"👥 Тип: {get_wish_type_text(wish.wish_type)}\n"
+        f"📅 Создано: {wish.created_at.strftime('%d.%m.%Y %H:%M')}"
+    )
+    
+    if wish.image_id:
+        await message.answer_photo(
+            photo=wish.image_id,
+            caption=wish_info,
+            reply_markup=get_wish_action_keyboard(wish.id)
+        )
+    else:
+        await message.answer(
+            wish_info,
+            reply_markup=get_wish_action_keyboard(wish.id)
+        )
+
+# Обработчик получения нового изображения для желания
+@router.message(WishStates.edit_image, F.photo | (F.text == "-"))
+async def process_edit_wish_image(message: Message, state: FSMContext):
+    # Получаем данные о желании
+    data = await state.get_data()
+    wish_id = data.get("wish_id")
+    wish = db.get_wish(wish_id)
+    
+    if not wish:
+        await message.answer("Желание не найдено. Возможно, оно было удалено.")
+        await state.clear()
+        return
+    
+    if message.text == "-":
+        # Если пользователь отправил "-", удаляем изображение
+        wish.image_id = None
+    else:
+        # Иначе обновляем изображение
+        wish.image_id = message.photo[-1].file_id
+    
+    db.update_wish(wish)
+    
+    await message.answer(f"✅ Изображение желания успешно обновлено!")
+    
+    # Очищаем состояние редактирования
+    await state.set_data({})
+    
+    # Показываем обновленную информацию о желании
+    wish_info = (
+        f"📌 Название: {wish.title}\n"
+        f"📝 Описание: {wish.description or 'Нет описания'}\n"
+        f"👥 Тип: {get_wish_type_text(wish.wish_type)}\n"
+        f"📅 Создано: {wish.created_at.strftime('%d.%m.%Y %H:%M')}"
+    )
+    
+    if wish.image_id:
+        await message.answer_photo(
+            photo=wish.image_id,
+            caption=wish_info,
+            reply_markup=get_wish_action_keyboard(wish.id)
+        )
+    else:
+        await message.answer(
+            wish_info,
+            reply_markup=get_wish_action_keyboard(wish.id)
+        )
+
+# Обработчик выбора нового типа желания
+@router.callback_query(WishStates.edit_type, F.data.startswith("wish_type:"))
+async def process_edit_wish_type(callback: CallbackQuery, state: FSMContext):
+    new_type = WishType(callback.data.split(":")[1])
+    
+    # Получаем данные о желании
+    data = await state.get_data()
+    wish_id = data.get("wish_id")
+    wish = db.get_wish(wish_id)
+    
+    if not wish:
+        await callback.answer("Желание не найдено. Возможно, оно было удалено.")
+        await state.clear()
+        return
+    
+    # Обновляем тип желания
+    wish.wish_type = new_type
+    db.update_wish(wish)
+    
+    await callback.answer(f"✅ Тип желания успешно обновлен!")
+    
+    # Очищаем состояние
+    await state.clear()
+    
+    # Показываем обновленную информацию о желании
+    wish_info = (
+        f"📌 Название: {wish.title}\n"
+        f"📝 Описание: {wish.description or 'Нет описания'}\n"
+        f"👥 Тип: {get_wish_type_text(wish.wish_type)}\n"
+        f"📅 Создано: {wish.created_at.strftime('%d.%m.%Y %H:%M')}"
+    )
+    
+    if wish.image_id:
+        # Нужно удалить старое сообщение и отправить новое с фото
+        await callback.message.delete()
+        await callback.message.answer_photo(
+            photo=wish.image_id,
+            caption=wish_info,
+            reply_markup=get_wish_action_keyboard(wish.id)
+        )
+    else:
+        await callback.message.edit_text(
+            wish_info,
+            reply_markup=get_wish_action_keyboard(wish.id)
+        )
+
+# Обработчик удаления желания
+@router.callback_query(F.data.startswith("delete_wish:"))
+async def confirm_delete_wish(callback: CallbackQuery):
+    wish_id = int(callback.data.split(":")[1])
+    wish = db.get_wish(wish_id)
+    
+    if not wish:
+        await callback.answer("Желание не найдено. Возможно, оно было удалено.")
+        return
+    
+    confirmation_text = f"⚠️ Вы уверены, что хотите удалить желание?\n\n📌 Название: {wish.title}"
+    
+    # Проверяем, содержит ли сообщение фото
+    if callback.message.photo:
+        # Если сообщение содержит фото, удаляем его и отправляем новое текстовое
+        await callback.message.delete()
+        await callback.message.answer(
+            confirmation_text,
+            reply_markup=get_confirm_keyboard("delete_wish", wish_id)
+        )
+    else:
+        # Если сообщение текстовое, просто редактируем текст
+        await callback.message.edit_text(
+            confirmation_text,
+            reply_markup=get_confirm_keyboard("delete_wish", wish_id)
+        )
+
+# Обработчик подтверждения удаления желания
+@router.callback_query(F.data.startswith("confirm_delete_wish:"))
+async def delete_wish(callback: CallbackQuery):
+    wish_id = int(callback.data.split(":")[1])
+    
+    # Удаляем желание
+    success = db.delete_wish(wish_id)
+    
+    if success:
+        await callback.answer("✅ Желание успешно удалено!")
+        
+        # Здесь нет необходимости проверять наличие фото, 
+        # т.к. на этапе подтверждения мы уже отправляем текстовое сообщение
+        await callback.message.edit_text("Желание было удалено.")
+        await callback.message.answer(
+            "Что бы вы хотели сделать дальше?",
+            reply_markup=get_main_keyboard()
+        )
+    else:
+        await callback.answer("❌ Ошибка при удалении желания.")
+
+# Обработчик переключения страниц в списке желаний
+@router.callback_query(F.data.startswith("wish_page:"))
+async def change_wish_page(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":")
+    page = int(parts[1])
+    
+    # Получаем сохраненный контекст
+    data = await state.get_data()
+    context = data.get("wish_context", "my_wishes")
+    
+    # Получаем желания в зависимости от контекста
+    user_id = callback.from_user.id
+    
+    if context == "my_wishes":
+        filtered_wishes = db.get_my_wishes(user_id)
+    elif context == "partner_wishes":
+        filtered_wishes = db.get_partner_wishes(user_id)
+    else:
+        filtered_wishes = db.get_wishes(user_id)
+    
+    await callback.message.edit_reply_markup(
+        reply_markup=get_wishes_list_keyboard(filtered_wishes, page, context=context)
+    )
+
+# Обработчик кнопки "Назад к желаниям"
+@router.callback_query(F.data.startswith("back_to_wishes"))
+async def back_to_wishes(callback: CallbackQuery, state: FSMContext):
+    # Получаем контекст из колбэка или из стейта
+    parts = callback.data.split(":")
+    context = parts[1] if len(parts) > 1 else "my_wishes"
+    
+    # На всякий случай обновляем контекст в стейте
+    await state.update_data(wish_context=context)
+    
+    # Получаем желания в зависимости от контекста
+    user_id = callback.from_user.id
+    
+    if context == "my_wishes":
+        filtered_wishes = db.get_my_wishes(user_id)
+        title = "✨ Ваши желания:"
+    elif context == "partner_wishes":
+        filtered_wishes = db.get_partner_wishes(user_id)
+        title = "🎀 Желания вашего партнёра:"
+    else:
+        filtered_wishes = db.get_wishes(user_id)
+        title = "🎁 Все желания:"
+    
+    # Проверяем, содержит ли сообщение фото
+    if callback.message.photo:
+        # Если сообщение содержит фото, удаляем его и отправляем новое
+        await callback.message.delete()
+        await callback.message.answer(
+            title,
+            reply_markup=get_wishes_list_keyboard(filtered_wishes, context=context)
+        )
+    else:
+        # Если сообщение текстовое, просто редактируем текст
+        await callback.message.edit_text(
+            title,
+            reply_markup=get_wishes_list_keyboard(filtered_wishes, context=context)
+        )
+
 # Обработчик команды /help
 @router.message(Command("help"))
 async def cmd_help(message: Message):
     help_text = (
-        "🤖 <b>Бот для задач для пары</b>\n\n"
-        "Этот бот поможет вам и вашему партнеру создавать, отслеживать и выполнять совместные задачи.\n\n"
+        "🤖 <b>Бот для задач и желаний пары</b>\n\n"
+        "Этот бот поможет вам и вашему партнеру создавать, отслеживать и выполнять совместные задачи, "
+        "а также вести список желаний для подарков.\n\n"
         "<b>Основные функции:</b>\n"
         "• Создание задач для себя, партнера или обоих\n"
         "• Просмотр всех задач по категориям\n"
         "• Изменение статуса задач (активные/выполненные)\n"
         "• Редактирование и удаление задач\n"
-        "• Уведомления партнеру о новых задачах\n\n"
+        "• Уведомления партнеру о новых задачах\n"
+        "• Добавление желаний с возможностью прикрепить фото\n"
+        "• Просмотр своих желаний и желаний партнера\n\n"
         "<b>Команды:</b>\n"
         "/start - Запустить бота\n"
         "/help - Показать эту справку\n\n"

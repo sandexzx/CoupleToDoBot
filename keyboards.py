@@ -1,13 +1,14 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from models import TaskType, TaskStatus
+from models import TaskType, TaskStatus, WishType
 
 def get_main_keyboard() -> ReplyKeyboardMarkup:
     # Создаем основную клавиатуру для главного меню
     keyboard = [
-        [KeyboardButton(text="🆕 Добавить задачу")],
+        [KeyboardButton(text="🆕 Добавить задачу"), KeyboardButton(text="🎁 Добавить желание")],
         [KeyboardButton(text="📋 Мои задачи"), KeyboardButton(text="🔄 Задачи партнера")],
-        [KeyboardButton(text="👫 Общие задачи")]
+        [KeyboardButton(text="👫 Общие задачи")],
+        [KeyboardButton(text="✨ Мои желания"), KeyboardButton(text="🎀 Желания партнёра")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
@@ -111,6 +112,73 @@ def get_edit_menu_keyboard(task_id: int, context: str = "my_tasks") -> InlineKey
     builder.button(text="🔙 Назад", callback_data=f"view_task:{task_id}:{context}")
     
     # Размещаем кнопки в один столбец
+    builder.adjust(1)
+    
+    return builder.as_markup()
+
+def get_wish_type_keyboard() -> InlineKeyboardMarkup:
+    # Клавиатура для выбора типа желания при создании
+    builder = InlineKeyboardBuilder()
+    
+    builder.button(text="🎁 Моё желание", callback_data=f"wish_type:{WishType.MY_WISH.value}")
+    builder.button(text="💝 Желание партнёра", callback_data=f"wish_type:{WishType.PARTNER_WISH.value}")
+    
+    builder.adjust(1)
+    
+    return builder.as_markup()
+
+def get_wish_action_keyboard(wish_id: int, context: str = "my_wishes") -> InlineKeyboardMarkup:
+    # Клавиатура для действий с желанием
+    builder = InlineKeyboardBuilder()
+    
+    builder.button(text="✏️ Редактировать", callback_data=f"edit_wish:{wish_id}")
+    builder.button(text="🗑️ Удалить", callback_data=f"delete_wish:{wish_id}")
+    builder.button(text="⬅️ Назад", callback_data=f"back_to_wishes:{context}")
+    
+    builder.adjust(1)
+    
+    return builder.as_markup()
+
+def get_wishes_list_keyboard(wishes, page=0, page_size=5, context="my_wishes") -> InlineKeyboardMarkup:
+    # Пагинация для списка желаний
+    builder = InlineKeyboardBuilder()
+    
+    start = page * page_size
+    end = min(start + page_size, len(wishes))
+    
+    for i in range(start, end):
+        wish = wishes[i]
+        title_display = wish.title[:30] + "..." if len(wish.title) > 30 else wish.title
+        builder.button(
+            text=f"🎁 {title_display}", 
+            callback_data=f"view_wish:{wish.id}:{context}"
+        )
+    
+    builder.adjust(1)
+    
+    if page > 0:
+        builder.button(text="⬅️ Назад", callback_data=f"wish_page:{page-1}")
+    
+    if end < len(wishes):
+        builder.button(text="➡️ Вперед", callback_data=f"wish_page:{page+1}")
+    
+    if page > 0 or end < len(wishes):
+        builder.adjust(1, 2)
+    
+    builder.button(text="🏠 Главное меню", callback_data="main_menu")
+    builder.adjust(1)
+    
+    return builder.as_markup()
+
+def get_edit_wish_menu_keyboard(wish_id: int, context: str = "my_wishes") -> InlineKeyboardMarkup:
+    # Клавиатура для меню редактирования желания
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📌 Название", callback_data="edit_wish:title")
+    builder.button(text="📝 Описание", callback_data="edit_wish:description")
+    builder.button(text="🖼️ Изображение", callback_data="edit_wish:image")
+    builder.button(text="👥 Тип желания", callback_data="edit_wish:type")
+    builder.button(text="🔙 Назад", callback_data=f"view_wish:{wish_id}:{context}")
+    
     builder.adjust(1)
     
     return builder.as_markup()

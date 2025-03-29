@@ -5,6 +5,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 from config import BOT_TOKEN
 from handlers import router
+from models import Task, TaskType, TaskStatus, Wish, WishType
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
