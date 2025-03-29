@@ -95,14 +95,16 @@ class Database:
         self.cursor.execute("""
         SELECT id, title, description, task_type, status, created_by, created_at
         FROM tasks
-        WHERE (created_by = ? AND task_type = ?) OR
+        WHERE ((created_by = ? AND task_type = ?) OR
             (created_by = ? AND task_type = ?) OR
-            (task_type = ? AND (created_by = ? OR created_by = ?))
+            (task_type = ? AND (created_by = ? OR created_by = ?)))
+        AND status = ?
         ORDER BY created_at DESC
         """, (user_id, TaskType.FOR_ME.value, 
             partner_id, TaskType.FOR_PARTNER.value, 
-            TaskType.FOR_BOTH.value, user_id, partner_id))
-        
+            TaskType.FOR_BOTH.value, user_id, partner_id,
+            TaskStatus.ACTIVE.value))
+
         tasks = []
         for row in self.cursor.fetchall():
             task = Task(
@@ -127,11 +129,13 @@ class Database:
         self.cursor.execute("""
         SELECT id, title, description, task_type, status, created_by, created_at
         FROM tasks
-        WHERE (created_by = ? AND task_type = ?) OR
-            (created_by = ? AND task_type = ?) 
+        WHERE ((created_by = ? AND task_type = ?) OR
+            (created_by = ? AND task_type = ?))
+        AND status = ?
         ORDER BY created_at DESC
         """, (user_id, TaskType.FOR_PARTNER.value, 
-            partner_id, TaskType.FOR_ME.value))
+            partner_id, TaskType.FOR_ME.value,
+            TaskStatus.ACTIVE.value))
         
         tasks = []
         for row in self.cursor.fetchall():
@@ -156,8 +160,10 @@ class Database:
         SELECT id, title, description, task_type, status, created_by, created_at
         FROM tasks
         WHERE task_type = ? AND (created_by = ? OR created_by = ?)
+        AND status = ?
         ORDER BY created_at DESC
-        """, (TaskType.FOR_BOTH.value, user_id, partner_id or -1))
+        """, (TaskType.FOR_BOTH.value, user_id, partner_id or -1,
+            TaskStatus.ACTIVE.value))
         
         tasks = []
         for row in self.cursor.fetchall():
@@ -326,3 +332,41 @@ class Database:
         self.cursor.execute("DELETE FROM wishes WHERE id = ?", (wish_id,))
         self.connection.commit()
         return self.cursor.rowcount > 0
+
+    def get_completed_tasks(self, user_id: int) -> List[Task]:
+        """Получает выполненные задачи пользователя"""
+        partner_id = self.get_partner_id(user_id)
+        if not partner_id:
+            partner_id = -1  # Используем -1 если партнёра нет
+        
+        self.cursor.execute("""
+        SELECT id, title, description, task_type, status, created_by, created_at
+        FROM tasks
+        WHERE ((created_by = ? AND task_type = ?) OR
+            (created_by = ? AND task_type = ?) OR
+            (task_type = ? AND (created_by = ? OR created_by = ?)) OR
+            (created_by = ? AND task_type = ?) OR
+            (created_by = ? AND task_type = ?))
+        AND status = ?
+        ORDER BY created_at DESC
+        """, (user_id, TaskType.FOR_ME.value, 
+            partner_id, TaskType.FOR_PARTNER.value, 
+            TaskType.FOR_BOTH.value, user_id, partner_id,
+            user_id, TaskType.FOR_PARTNER.value,
+            partner_id, TaskType.FOR_ME.value,
+            TaskStatus.COMPLETED.value))
+        
+        tasks = []
+        for row in self.cursor.fetchall():
+            task = Task(
+                id=row[0],
+                title=row[1],
+                description=row[2],
+                task_type=TaskType(row[3]),
+                status=TaskStatus(row[4]),
+                created_by=row[5],
+                created_at=datetime.fromisoformat(row[6])
+            )
+            tasks.append(task)
+        
+        return tasks

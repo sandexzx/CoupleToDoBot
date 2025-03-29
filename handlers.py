@@ -1272,3 +1272,22 @@ async def cmd_help(message: Message):
     )
     
     await message.answer(help_text, parse_mode="HTML", reply_markup=get_main_keyboard())
+
+# Обработчик кнопки "Выполненные задачи"
+@router.message(F.text == "✅ Выполненные задачи")
+async def show_completed_tasks(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    
+    # Получаем выполненные задачи
+    completed_tasks = db.get_completed_tasks(user_id)
+    
+    if not completed_tasks:
+        await message.answer("У вас пока нет выполненных задач.")
+        return
+    
+    await state.update_data(task_context="completed_tasks")
+    
+    await message.answer(
+        "✅ Выполненные задачи:",
+        reply_markup=get_tasks_list_keyboard(completed_tasks, context="completed_tasks")
+    )
