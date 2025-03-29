@@ -147,23 +147,31 @@ async def process_task_type(callback: CallbackQuery, state: FSMContext):
     # Очищаем состояние
     await state.clear()
 
-    # Отправляем уведомление партнеру, если задача для него или для обоих
-    if task.task_type in [TaskType.FOR_PARTNER, TaskType.FOR_BOTH]:
-        partner_id = db.get_partner_id(callback.from_user.id)
-        if partner_id:
-            try:
-                # Отправляем уведомление партнеру
-                await callback.bot.send_message(
-                    partner_id,
-                    f"🔔 У вас новая задача от партнера!\n\n"
-                    f"📌 Название: {title}\n"
-                    f"📝 Описание: {description or 'Нет описания'}\n"
-                    f"👥 Тип: {get_task_type_text(TaskType(task_type))}"
-                )
-                await callback.answer("✅ Уведомление партнеру отправлено!")
-            except Exception as e:
-                logging.error(f"Ошибка при отправке уведомления партнеру: {e}")
-                await callback.answer("⚠️ Не удалось отправить уведомление партнеру")
+    # Всегда отправляем уведомление партнеру
+    partner_id = db.get_partner_id(callback.from_user.id)
+    if partner_id:
+        try:
+            # Формируем сообщение в зависимости от типа задачи
+            message_text = ""
+            if task.task_type == TaskType.FOR_PARTNER:
+                message_text = f"🔔 У вас новая задача от партнера!"
+            elif task.task_type == TaskType.FOR_BOTH:
+                message_text = f"🔔 Создана новая общая задача!"
+            else:  # FOR_ME
+                message_text = f"🔔 Партнер добавил(а) задачу для себя!"
+
+            # Отправляем уведомление партнеру
+            await callback.bot.send_message(
+                partner_id,
+                f"{message_text}"
+                f"📌 Название: {title}"
+                f"📝 Описание: {description or 'Нет описания'}"
+                f"👥 Тип: {get_task_type_text(TaskType(task_type))}"
+            )
+            await callback.answer("✅ Уведомление партнеру отправлено!")
+        except Exception as e:
+            logging.error(f"Ошибка при отправке уведомления партнеру: {e}")
+            await callback.answer("⚠️ Не удалось отправить уведомление партнеру")
     
     # Отправляем клавиатуру главного меню
     await callback.message.answer(
@@ -766,32 +774,35 @@ async def process_wish_type(callback: CallbackQuery, state: FSMContext):
     # Очищаем состояние
     await state.clear()
     
-    # Отправляем уведомление партнеру, если желание относится к Partner
-    if wish.wish_type == WishType.PARTNER_WISH:
-        partner_id = db.get_partner_id(callback.from_user.id)
-        if partner_id:
-            try:
-                # Отправляем уведомление партнеру
-                notification = f"🎁 {callback.from_user.first_name} добавил(а) новое желание для вас!\n\n"
-                notification += f"📌 Название: {title}\n"
-                notification += f"📝 Описание: {description or 'Нет описания'}"
-                
-                if image_id:
-                    await callback.bot.send_photo(
-                        partner_id,
-                        photo=image_id,
-                        caption=notification
-                    )
-                else:
-                    await callback.bot.send_message(
-                        partner_id,
-                        notification
-                    )
-                
-                await callback.answer("✅ Уведомление партнеру отправлено!")
-            except Exception as e:
-                logging.error(f"Ошибка при отправке уведомления партнеру: {e}")
-                await callback.answer("⚠️ Не удалось отправить уведомление партнеру")
+    # Всегда отправляем уведомление партнеру
+    partner_id = db.get_partner_id(callback.from_user.id)
+    if partner_id:
+        try:
+            # Формируем сообщение в зависимости от типа желания
+            if wish.wish_type == WishType.PARTNER_WISH:
+                notification = f"🎁 {callback.from_user.first_name} добавил(а) новое желание для вас!"
+            else:  # MY_WISH
+                notification = f"✨ {callback.from_user.first_name} добавил(а) своё новое желание!"
+
+            notification += f"📌 Название: {title}"
+            notification += f"📝 Описание: {description or 'Нет описания'}"
+            
+            if image_id:
+                await callback.bot.send_photo(
+                    partner_id,
+                    photo=image_id,
+                    caption=notification
+                )
+            else:
+                await callback.bot.send_message(
+                    partner_id,
+                    notification
+                )
+            
+            await callback.answer("✅ Уведомление партнеру отправлено!")
+        except Exception as e:
+            logging.error(f"Ошибка при отправке уведомления партнеру: {e}")
+            await callback.answer("⚠️ Не удалось отправить уведомление партнеру")
     
     # Отправляем клавиатуру главного меню
     await callback.message.answer(
