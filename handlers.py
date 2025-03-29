@@ -287,8 +287,9 @@ async def change_task_status(callback: CallbackQuery, state: FSMContext):
     task.status = new_status
     db.update_task(task)
 
-    # Уведомляем партнера об изменении статуса задачи, если она имеет отношение к нему
-    if task.task_type in [TaskType.FOR_PARTNER, TaskType.FOR_BOTH] and task.created_by == callback.from_user.id:
+    # Уведомляем партнера об изменении статуса задачи
+    partner_id = db.get_partner_id(callback.from_user.id)
+    if partner_id and task.created_by != partner_id:
         partner_id = db.get_partner_id(callback.from_user.id)
         if partner_id:
             try:
@@ -409,6 +410,18 @@ async def process_edit_title(message: Message, state: FSMContext):
     db.update_task(task)
     
     await message.answer(f"✅ Название задачи успешно обновлено!")
+
+    # Уведомляем партнера об изменении названия задачи
+    partner_id = db.get_partner_id(message.from_user.id)
+    if partner_id and task.created_by != partner_id:  # Уведомляем только если задача создана не партнером
+        try:
+            await message.bot.send_message(
+                partner_id,
+                f"🔔 Обновление задачи!\n"
+                f"📌 Задача изменена: новое название \"{task.title}\""
+            )
+        except Exception as e:
+            logging.error(f"Ошибка при отправке уведомления об изменении названия: {e}")
     
     # Очищаем состояние
     await state.clear()
@@ -444,6 +457,18 @@ async def process_edit_description(message: Message, state: FSMContext):
     db.update_task(task)
     
     await message.answer(f"✅ Описание задачи успешно обновлено!")
+
+    # Уведомляем партнера об изменении описания задачи
+    partner_id = db.get_partner_id(message.from_user.id)
+    if partner_id and task.created_by != partner_id:
+        try:
+            await message.bot.send_message(
+                partner_id,
+                f"🔔 Обновление задачи!\n"
+                f"📌 У задачи \"{task.title}\" изменено описание"
+            )
+        except Exception as e:
+            logging.error(f"Ошибка при отправке уведомления об изменении описания: {e}")
     
     # Очищаем состояние
     await state.clear()
@@ -477,6 +502,18 @@ async def process_edit_type(callback: CallbackQuery, state: FSMContext):
     db.update_task(task)
     
     await callback.answer(f"✅ Тип задачи успешно обновлен!")
+
+    # Уведомляем партнера об изменении типа задачи
+    partner_id = db.get_partner_id(callback.from_user.id)
+    if partner_id and task.created_by != partner_id:
+        try:
+            await callback.bot.send_message(
+                partner_id,
+                f"🔔 Обновление задачи!\n"
+                f"📌 У задачи \"{task.title}\" изменен тип на {get_task_type_text(task.task_type)}"
+            )
+        except Exception as e:
+            logging.error(f"Ошибка при отправке уведомления об изменении типа: {e}")
     
     # Очищаем состояние
     await state.clear()
@@ -510,6 +547,21 @@ async def confirm_delete_task(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("confirm_delete:"))
 async def delete_task(callback: CallbackQuery):
     task_id = int(callback.data.split(":")[1])
+
+    # Получаем задачу перед удалением, чтобы знать детали
+    task = db.get_task(task_id)
+    # Уведомляем партнера об удалении задачи
+    if task:
+        partner_id = db.get_partner_id(callback.from_user.id)
+        if partner_id and task.created_by != partner_id:
+            try:
+                await callback.bot.send_message(
+                    partner_id,
+                    f"🔔 Задача удалена!\n"
+                    f"📌 Задача \"{task.title}\" была удалена"
+                )
+            except Exception as e:
+                logging.error(f"Ошибка при отправке уведомления об удалении: {e}")
     
     # Удаляем задачу
     success = db.delete_task(task_id)
@@ -977,6 +1029,18 @@ async def process_edit_wish_title(message: Message, state: FSMContext):
     db.update_wish(wish)
     
     await message.answer(f"✅ Название желания успешно обновлено!")
+
+    # Уведомляем партнера об изменении названия желания
+    partner_id = db.get_partner_id(message.from_user.id)
+    if partner_id and wish.created_by != partner_id:
+        try:
+            await message.bot.send_message(
+                partner_id,
+                f"🎁 Обновление желания!\n"
+                f"📌 Желание изменено: новое название \"{wish.title}\""
+            )
+        except Exception as e:
+            logging.error(f"Ошибка при отправке уведомления об изменении названия желания: {e}")
     
     # Очищаем состояние редактирования
     await state.set_data({})
@@ -1023,6 +1087,18 @@ async def process_edit_wish_description(message: Message, state: FSMContext):
     db.update_wish(wish)
     
     await message.answer(f"✅ Описание желания успешно обновлено!")
+
+    # Уведомляем партнера об изменении описания желания
+    partner_id = db.get_partner_id(message.from_user.id)
+    if partner_id and wish.created_by != partner_id:
+        try:
+            await message.bot.send_message(
+                partner_id,
+                f"🎁 Обновление желания!\n"
+                f"📌 У желания \"{wish.title}\" изменено описание"
+            )
+        except Exception as e:
+            logging.error(f"Ошибка при отправке уведомления об изменении описания желания: {e}")
     
     # Очищаем состояние редактирования
     await state.set_data({})
@@ -1070,6 +1146,26 @@ async def process_edit_wish_image(message: Message, state: FSMContext):
     db.update_wish(wish)
     
     await message.answer(f"✅ Изображение желания успешно обновлено!")
+
+    # Уведомляем партнера об изменении изображения желания
+    partner_id = db.get_partner_id(message.from_user.id)
+    if partner_id and wish.created_by != partner_id:
+        try:
+            if wish.image_id:
+                await message.bot.send_photo(
+                    partner_id,
+                    photo=wish.image_id,
+                    caption=f"🎁 Обновление желания!\n"
+                    f"📌 У желания \"{wish.title}\" обновлено изображение"
+                )
+            else:
+                await message.bot.send_message(
+                    partner_id,
+                    f"🎁 Обновление желания!\n"
+                    f"📌 У желания \"{wish.title}\" удалено изображение"
+                )
+        except Exception as e:
+            logging.error(f"Ошибка при отправке уведомления об изменении изображения: {e}")
     
     # Очищаем состояние редактирования
     await state.set_data({})
@@ -1114,6 +1210,26 @@ async def process_edit_wish_type(callback: CallbackQuery, state: FSMContext):
     db.update_wish(wish)
     
     await callback.answer(f"✅ Тип желания успешно обновлен!")
+
+    # Уведомляем партнера об изменении типа желания
+    partner_id = db.get_partner_id(callback.from_user.id)
+    if partner_id and wish.created_by != partner_id:
+        try:
+            msg = f"🎁 Обновление желания!\n📌 У желания \"{wish.title}\" изменен тип на {get_wish_type_text(wish.wish_type)}"
+            
+            if wish.image_id:
+                await callback.bot.send_photo(
+                    partner_id,
+                    photo=wish.image_id,
+                    caption=msg
+                )
+            else:
+                await callback.bot.send_message(
+                    partner_id,
+                    msg
+                )
+        except Exception as e:
+            logging.error(f"Ошибка при отправке уведомления об изменении типа желания: {e}")
     
     # Очищаем состояние
     await state.clear()
@@ -1171,6 +1287,29 @@ async def confirm_delete_wish(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("confirm_delete_wish:"))
 async def delete_wish(callback: CallbackQuery):
     wish_id = int(callback.data.split(":")[1])
+
+    # Получаем желание перед удалением, чтобы знать детали
+    wish = db.get_wish(wish_id)
+    # Уведомляем партнера об удалении желания
+    if wish:
+        partner_id = db.get_partner_id(callback.from_user.id)
+        if partner_id and wish.created_by != partner_id:
+            try:
+                if wish.image_id:
+                    await callback.bot.send_photo(
+                        partner_id,
+                        photo=wish.image_id,
+                        caption=f"🎁 Желание удалено!\n"
+                        f"📌 Желание \"{wish.title}\" было удалено"
+                    )
+                else:
+                    await callback.bot.send_message(
+                        partner_id,
+                        f"🎁 Желание удалено!\n"
+                        f"📌 Желание \"{wish.title}\" было удалено"
+                    )
+            except Exception as e:
+                logging.error(f"Ошибка при отправке уведомления об удалении желания: {e}")
     
     # Удаляем желание
     success = db.delete_wish(wish_id)
