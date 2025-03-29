@@ -39,11 +39,9 @@ PROJECT_NAME="CoupleToDoBot"
 DEPLOY_DIR="/opt/${PROJECT_NAME}"
 VENV_DIR="${DEPLOY_DIR}/venv"
 SERVICE_NAME="coupletodobot"
-GIT_REPO="$1" # First argument should be GitHub repository URL
+GIT_REPO="https://github.com/sandexzx/CoupleToDoBot"
 
-if [ -z "$GIT_REPO" ]; then
-    warn "No GitHub repository URL provided, assuming local deployment"
-fi
+log "Will deploy from GitHub repository: ${GIT_REPO}"
 
 # =====================================================
 # Check System and Install Dependencies
@@ -64,28 +62,19 @@ log "Setting up project directory at ${DEPLOY_DIR}..."
 # Create project directory if it doesn't exist
 mkdir -p "$DEPLOY_DIR"
 
-# Clone from GitHub if a repository URL was provided
-if [ -n "$GIT_REPO" ]; then
-    log "Cloning repository from ${GIT_REPO}..."
-    rm -rf "${DEPLOY_DIR}/temp_clone"
-    git clone "$GIT_REPO" "${DEPLOY_DIR}/temp_clone" || error "Failed to clone repository"
-    
-    # Copy files from the cloned repository
-    cp -r "${DEPLOY_DIR}/temp_clone"/* "$DEPLOY_DIR/"
-    rm -rf "${DEPLOY_DIR}/temp_clone"
-else
-    log "Copying files from current directory..."
-    
-    # Copy Python files and requirements
-    cp -r ./*.py "$DEPLOY_DIR/" 2>/dev/null || warn "No Python files found in current directory"
-    
-    # Copy requirements.txt if it exists
-    if [ -f "requirements.txt" ]; then
-        cp requirements.txt "$DEPLOY_DIR/"
-    else
-        # Create requirements.txt based on your code analysis
-        echo "aiogram==3.19.0" > "${DEPLOY_DIR}/requirements.txt"
-    fi
+# Clone from GitHub repository
+log "Cloning repository from ${GIT_REPO}..."
+rm -rf "${DEPLOY_DIR}/temp_clone"
+git clone "$GIT_REPO" "${DEPLOY_DIR}/temp_clone" || error "Failed to clone repository"
+
+# Copy files from the cloned repository
+cp -r "${DEPLOY_DIR}/temp_clone"/* "$DEPLOY_DIR/"
+rm -rf "${DEPLOY_DIR}/temp_clone"
+
+# Check if requirements.txt exists, if not create it
+if [ ! -f "${DEPLOY_DIR}/requirements.txt" ]; then
+    log "Creating requirements.txt file based on project analysis..."
+    echo "aiogram==3.19.0" > "${DEPLOY_DIR}/requirements.txt"
 fi
 
 # =====================================================
@@ -113,6 +102,9 @@ mkdir -p "${DEPLOY_DIR}/data"
 chown -R $(logname):$(logname) "${DEPLOY_DIR}/data"
 chmod 755 "${DEPLOY_DIR}/data"
 
+# Set permissions for the entire project directory
+chown -R $(logname):$(logname) "${DEPLOY_DIR}"
+
 # =====================================================
 # Create Systemd Service
 # =====================================================
@@ -129,6 +121,8 @@ if [ ! -f "${DEPLOY_DIR}/${MAIN_FILE}" ]; then
         fi
     done
 fi
+
+log "Detected main file: ${MAIN_FILE}"
 
 # Create systemd service file
 cat > "/etc/systemd/system/${SERVICE_NAME}.service" << EOF
@@ -181,6 +175,10 @@ echo -e "Stop the bot:     ${GREEN}sudo systemctl stop ${SERVICE_NAME}${NC}"
 echo -e "Restart the bot:  ${GREEN}sudo systemctl restart ${SERVICE_NAME}${NC}"
 echo -e "Check status:     ${GREEN}sudo systemctl status ${SERVICE_NAME}${NC}"
 echo -e "View logs:        ${GREEN}sudo journalctl -u ${SERVICE_NAME} -f${NC}"
+echo
+echo -e "${BLUE}=== Database Location ===${NC}"
+echo -e "Database file:    ${GREEN}${DEPLOY_DIR}/couple_tasks.db${NC}"
+echo -e "To backup:        ${GREEN}cp ${DEPLOY_DIR}/couple_tasks.db /path/to/backup/${NC}"
 echo
 echo -e "Your bot should now be running! If you need to make changes to the code,"
 echo -e "update the files in ${DEPLOY_DIR} and restart the service."
