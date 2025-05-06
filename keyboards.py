@@ -8,7 +8,8 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
         [KeyboardButton(text="🆕 Добавить задачу"), KeyboardButton(text="🎁 Добавить желание")],
         [KeyboardButton(text="📋 Мои задачи"), KeyboardButton(text="🔄 Задачи партнера")],
         [KeyboardButton(text="👫 Общие задачи"), KeyboardButton(text="✅ Выполненные задачи")],
-        [KeyboardButton(text="✨ Мои желания"), KeyboardButton(text="🎀 Желания партнёра")]
+        [KeyboardButton(text="✨ Мои желания"), KeyboardButton(text="🎀 Желания партнёра")],
+        [KeyboardButton(text="🎬 Фильмы")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
@@ -181,4 +182,94 @@ def get_edit_wish_menu_keyboard(wish_id: int, context: str = "my_wishes") -> Inl
     
     builder.adjust(1)
     
+    return builder.as_markup()
+
+def get_movies_menu_keyboard() -> InlineKeyboardMarkup:
+    # Клавиатура для меню фильмов
+    builder = InlineKeyboardBuilder()
+    
+    builder.button(text="🎥 Мои фильмы", callback_data="movies:my")
+    builder.button(text="🎬 Фильмы партнёра", callback_data="movies:partner")
+    builder.button(text="➕ Добавить фильм", callback_data="movies:add")
+    builder.button(text="🏠 Главное меню", callback_data="main_menu")
+    
+    builder.adjust(1)
+    return builder.as_markup()
+
+def get_movie_type_keyboard() -> InlineKeyboardMarkup:
+    # Клавиатура для выбора типа фильма при создании
+    builder = InlineKeyboardBuilder()
+    
+    builder.button(text="🎥 Мои фильмы", callback_data="movie_type:my_movies")
+    builder.button(text="🎬 Фильмы партнёра", callback_data="movie_type:partner_movies")
+    
+    builder.adjust(1)
+    return builder.as_markup()
+
+def get_movie_action_keyboard(movie_id: int, context: str = "my_movies") -> InlineKeyboardMarkup:
+    # Клавиатура для действий с фильмом
+    builder = InlineKeyboardBuilder()
+    
+    if context == "partner_movies":
+        builder.button(text="⭐ Оценить", callback_data=f"rate_movie:{movie_id}")
+    else:
+        builder.button(text="✏️ Редактировать", callback_data=f"edit_movie:{movie_id}")
+        builder.button(text="🗑️ Удалить", callback_data=f"delete_movie:{movie_id}")
+    
+    builder.button(text="⬅️ Назад", callback_data=f"back_to_movies:{context}")
+    
+    builder.adjust(1)
+    return builder.as_markup()
+
+def get_movie_rating_keyboard(movie_id: int) -> InlineKeyboardMarkup:
+    # Клавиатура для оценки фильма
+    builder = InlineKeyboardBuilder()
+    
+    for i in range(1, 6):
+        builder.button(text=f"{'⭐' * i}", callback_data=f"set_rating:{movie_id}:{i}")
+    
+    builder.button(text="⬅️ Назад", callback_data=f"view_movie:{movie_id}:partner_movies")
+    
+    builder.adjust(5, 1)
+    return builder.as_markup()
+
+def get_movies_list_keyboard(movies, page=0, page_size=5, context="my_movies") -> InlineKeyboardMarkup:
+    # Пагинация для списка фильмов
+    builder = InlineKeyboardBuilder()
+    
+    start = page * page_size
+    end = min(start + page_size, len(movies))
+    
+    for i in range(start, end):
+        movie = movies[i]
+        title_display = movie['title'][:30] + "..." if len(movie['title']) > 30 else movie['title']
+        builder.button(
+            text=f"🎬 {title_display}", 
+            callback_data=f"view_movie:{movie['id']}:{context}"
+        )
+    
+    builder.adjust(1)
+    
+    if page > 0:
+        builder.button(text="⬅️ Назад", callback_data=f"movie_page:{page-1}")
+    
+    if end < len(movies):
+        builder.button(text="➡️ Вперед", callback_data=f"movie_page:{page+1}")
+    
+    if page > 0 or end < len(movies):
+        builder.adjust(1, 2)
+    
+    builder.button(text="🏠 Главное меню", callback_data="main_menu")
+    builder.adjust(1)
+    
+    return builder.as_markup()
+
+def get_edit_movie_menu_keyboard(movie_id: int, context: str = "my_movies") -> InlineKeyboardMarkup:
+    # Клавиатура для меню редактирования фильма
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📌 Название", callback_data="edit_movie:title")
+    builder.button(text="📝 Описание", callback_data="edit_movie:description")
+    builder.button(text="🔙 Назад", callback_data=f"view_movie:{movie_id}:{context}")
+    
+    builder.adjust(1)
     return builder.as_markup()

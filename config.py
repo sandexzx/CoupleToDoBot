@@ -25,7 +25,7 @@ if CURRENT_IP == PROD_SERVER_IP:
     BOT_TOKEN = '8134901429:AAFlKuE-pnR1Cx5hc-qZCKo55cklv0dyseM'
 else:
     # Мы на девелоперской машине, используем тестовый токен
-    BOT_TOKEN = '6122819236:AAGTZozyMnGx7sn1vk2fJEgcNOgZbuzA9d8'
+    BOT_TOKEN = '6122819236:AAE-6iJ57CMBsBlJU62gOprmOm_d2ItLIhM'
 
 # Список ID админов бота
 ADMIN_IDS = [165879072, 5237388776]

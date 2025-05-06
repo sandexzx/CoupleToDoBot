@@ -14,6 +14,27 @@ class WishType(Enum):
     MY_WISH = "my_wish"
     PARTNER_WISH = "partner_wish" 
 
+class MovieType(Enum):
+    MY_MOVIES = "my_movies"
+    PARTNER_MOVIES = "partner_movies"
+
+class Movie:
+    def __init__(self, 
+                 id: int = None,
+                 title: str = "",
+                 description: str = "",
+                 movie_type: MovieType = MovieType.MY_MOVIES,
+                 created_by: int = None,
+                 rating: int = None,
+                 created_at: datetime = None):
+        self.id = id
+        self.title = title
+        self.description = description
+        self.movie_type = movie_type
+        self.created_by = created_by
+        self.rating = rating
+        self.created_at = created_at or datetime.now()
+
 class Wish:
     def __init__(self, 
                  id: int = None,

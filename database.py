@@ -41,6 +41,18 @@ class Database:
             created_at TIMESTAMP NOT NULL
         )
         """)
+
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS movies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            description TEXT,
+            movie_type TEXT NOT NULL,
+            created_by INTEGER NOT NULL,
+            rating INTEGER,
+            created_at TIMESTAMP NOT NULL
+        )
+        """)
         self.connection.commit()
         
     def add_user(self, user_id: int, partner_id: int = None):
@@ -370,3 +382,108 @@ class Database:
             tasks.append(task)
         
         return tasks
+
+    def add_movie(self, title: str, description: str, movie_type: str, created_by: int) -> int:
+        self.cursor.execute("""
+        INSERT INTO movies (title, description, movie_type, created_by, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """, (title, description, movie_type, created_by, datetime.now()))
+        self.connection.commit()
+        return self.cursor.lastrowid
+
+    def get_my_movies(self, user_id: int) -> List[dict]:
+        self.cursor.execute("""
+        SELECT id, title, description, movie_type, rating, created_at
+        FROM movies
+        WHERE created_by = ? AND movie_type = 'my_movies'
+        ORDER BY created_at DESC
+        """, (user_id,))
+        
+        movies = []
+        for row in self.cursor.fetchall():
+            movies.append({
+                'id': row[0],
+                'title': row[1],
+                'description': row[2],
+                'movie_type': row[3],
+                'rating': row[4],
+                'created_at': datetime.fromisoformat(row[5])
+            })
+        return movies
+
+    def get_partner_movies(self, user_id: int) -> List[dict]:
+        partner_id = self.get_partner_id(user_id)
+        if not partner_id:
+            return []
+            
+        self.cursor.execute("""
+        SELECT id, title, description, movie_type, rating, created_at
+        FROM movies
+        WHERE created_by = ? AND movie_type = 'partner_movies'
+        ORDER BY created_at DESC
+        """, (partner_id,))
+        
+        movies = []
+        for row in self.cursor.fetchall():
+            movies.append({
+                'id': row[0],
+                'title': row[1],
+                'description': row[2],
+                'movie_type': row[3],
+                'rating': row[4],
+                'created_at': datetime.fromisoformat(row[5])
+            })
+        return movies
+
+    def get_movie(self, movie_id: int) -> Optional[dict]:
+        self.cursor.execute("""
+        SELECT id, title, description, movie_type, created_by, rating, created_at
+        FROM movies
+        WHERE id = ?
+        """, (movie_id,))
+        
+        row = self.cursor.fetchone()
+        if not row:
+            return None
+            
+        return {
+            'id': row[0],
+            'title': row[1],
+            'description': row[2],
+            'movie_type': row[3],
+            'created_by': row[4],
+            'rating': row[5],
+            'created_at': datetime.fromisoformat(row[6])
+        }
+
+    def update_movie(self, movie_id: int, title: str, description: str) -> bool:
+        try:
+            self.cursor.execute("""
+            UPDATE movies
+            SET title = ?, description = ?
+            WHERE id = ?
+            """, (title, description, movie_id))
+            self.connection.commit()
+            return True
+        except:
+            return False
+
+    def delete_movie(self, movie_id: int) -> bool:
+        try:
+            self.cursor.execute("DELETE FROM movies WHERE id = ?", (movie_id,))
+            self.connection.commit()
+            return True
+        except:
+            return False
+
+    def update_movie_rating(self, movie_id: int, rating: int) -> bool:
+        try:
+            self.cursor.execute("""
+            UPDATE movies
+            SET rating = ?
+            WHERE id = ?
+            """, (rating, movie_id))
+            self.connection.commit()
+            return True
+        except:
+            return False

@@ -1,18 +1,20 @@
 import logging
 from aiogram import Router, F, types
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from models import Task, TaskType, TaskStatus, Wish, WishType
+from models import Task, TaskType, TaskStatus, Wish, WishType, Movie, MovieType
 
 from config import ADMIN_IDS
 from database import Database
 from keyboards import (
     get_edit_menu_keyboard, get_main_keyboard, get_task_type_keyboard, get_task_action_keyboard,
     get_tasks_list_keyboard, get_cancel_keyboard, get_confirm_keyboard, get_wish_type_keyboard, 
-    get_wishes_list_keyboard, get_wishes_list_keyboard, get_wish_action_keyboard, get_edit_wish_menu_keyboard
+    get_wishes_list_keyboard, get_wishes_list_keyboard, get_wish_action_keyboard, get_edit_wish_menu_keyboard,
+    get_movies_menu_keyboard, get_movies_list_keyboard, get_movie_type_keyboard, get_movie_action_keyboard,
+    get_edit_movie_menu_keyboard, get_movie_rating_keyboard
 )
 
 router = Router()
@@ -1340,26 +1342,15 @@ async def delete_wish(callback: CallbackQuery):
 
 # Обработчик переключения страниц в списке желаний
 @router.callback_query(F.data.startswith("wish_page:"))
-async def change_wish_page(callback: CallbackQuery, state: FSMContext):
-    parts = callback.data.split(":")
-    page = int(parts[1])
+async def handle_wish_page(callback: CallbackQuery, state: FSMContext):
+    page = int(callback.data.split(":")[1])
+    context = "my_wishes" if "my_wishes" in callback.message.text else "partner_wishes"
     
-    # Получаем сохраненный контекст
-    data = await state.get_data()
-    context = data.get("wish_context", "my_wishes")
+    filtered_wishes = db.get_my_wishes(callback.from_user.id) if context == "my_wishes" else db.get_partner_wishes(callback.from_user.id)
     
-    # Получаем желания в зависимости от контекста
-    user_id = callback.from_user.id
-    
-    if context == "my_wishes":
-        filtered_wishes = db.get_my_wishes(user_id)
-    elif context == "partner_wishes":
-        filtered_wishes = db.get_partner_wishes(user_id)
-    else:
-        filtered_wishes = db.get_wishes(user_id)
-    
-    await callback.message.edit_reply_markup(
-        reply_markup=get_wishes_list_keyboard(filtered_wishes, page, context=context)
+    await callback.message.edit_text(
+        callback.message.text,
+        reply_markup=get_wishes_list_keyboard(filtered_wishes, page=page, context=context)
     )
 
 # Обработчик кнопки "Назад к желаниям"
@@ -1441,3 +1432,285 @@ async def show_completed_tasks(message: Message, state: FSMContext):
         "✅ Выполненные задачи:",
         reply_markup=get_tasks_list_keyboard(completed_tasks, context="completed_tasks")
     )
+
+# Movie handlers
+@router.message(F.text == "🎬 Фильмы")
+async def show_movies_menu(message: Message, state: FSMContext):
+    await message.answer(
+        "Выберите действие:",
+        reply_markup=get_movies_menu_keyboard()
+    )
+
+@router.callback_query(F.data.startswith("movies:"))
+async def handle_movies_menu(callback: CallbackQuery, state: FSMContext):
+    action = callback.data.split(":")[1]
+    
+    if action == "my":
+        movies = db.get_my_movies(callback.from_user.id)
+        if not movies:
+            await callback.message.edit_text(
+                "У вас пока нет фильмов в списке.",
+                reply_markup=get_movies_menu_keyboard()
+            )
+            return
+            
+        await callback.message.edit_text(
+            "Ваши фильмы:",
+            reply_markup=get_movies_list_keyboard(movies, context="my_movies")
+        )
+        
+    elif action == "partner":
+        movies = db.get_partner_movies(callback.from_user.id)
+        if not movies:
+            await callback.message.edit_text(
+                "У партнёра пока нет фильмов в списке.",
+                reply_markup=get_movies_menu_keyboard()
+            )
+            return
+            
+        await callback.message.edit_text(
+            "Фильмы партнёра:",
+            reply_markup=get_movies_list_keyboard(movies, context="partner_movies")
+        )
+        
+    elif action == "add":
+        await callback.message.edit_text(
+            "Выберите, в какой список добавить фильм:",
+            reply_markup=get_movie_type_keyboard()
+        )
+
+@router.callback_query(F.data.startswith("movie_type:"))
+async def handle_movie_type(callback: CallbackQuery, state: FSMContext):
+    movie_type = callback.data.split(":")[1]
+    await state.update_data(movie_type=movie_type)
+    
+    await callback.message.edit_text(
+        "Введите название фильма:",
+        reply_markup=get_cancel_keyboard()
+    )
+    await state.set_state("waiting_for_movie_title")
+
+@router.message(StateFilter("waiting_for_movie_title"))
+async def handle_movie_title(message: Message, state: FSMContext):
+    await state.update_data(movie_title=message.text)
+    
+    await message.answer(
+        "Введите описание фильма (или отправьте '-' если описание не нужно):",
+        reply_markup=get_cancel_keyboard()
+    )
+    await state.set_state("waiting_for_movie_description")
+
+@router.message(StateFilter("waiting_for_movie_description"))
+async def handle_movie_description(message: Message, state: FSMContext):
+    data = await state.get_data()
+    description = "-" if message.text == "-" else message.text
+    
+    movie_id = db.add_movie(
+        title=data["movie_title"],
+        description=description,
+        movie_type=data["movie_type"],
+        created_by=message.from_user.id
+    )
+    
+    await message.answer(
+        "Фильм успешно добавлен!",
+        reply_markup=get_movies_menu_keyboard()
+    )
+    await state.clear()
+
+@router.callback_query(F.data.startswith("view_movie:"))
+async def handle_view_movie(callback: CallbackQuery, state: FSMContext):
+    movie_id = int(callback.data.split(":")[1])
+    context = callback.data.split(":")[2]
+    
+    movie = db.get_movie(movie_id)
+    if not movie:
+        await callback.message.edit_text(
+            "Фильм не найден.",
+            reply_markup=get_movies_menu_keyboard()
+        )
+        return
+    
+    text = f"🎬 {movie['title']}\n\n"
+    if movie['description'] and movie['description'] != "-":
+        text += f"📝 {movie['description']}\n\n"
+    text += f"📅 Добавлен: {movie['created_at'].strftime('%d.%m.%Y %H:%M')}"
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_movie_action_keyboard(movie_id, context)
+    )
+
+@router.callback_query(F.data.startswith("edit_movie:"))
+async def handle_edit_movie(callback: CallbackQuery, state: FSMContext):
+    action = callback.data.split(":")[1]
+    
+    if action == "title":
+        await callback.message.edit_text(
+            "Введите новое название фильма:",
+            reply_markup=get_cancel_keyboard()
+        )
+        await state.set_state("waiting_for_movie_title_edit")
+        
+    elif action == "description":
+        await callback.message.edit_text(
+            "Введите новое описание фильма (или отправьте '-' если описание не нужно):",
+            reply_markup=get_cancel_keyboard()
+        )
+        await state.set_state("waiting_for_movie_description_edit")
+        
+    else:
+        movie_id = int(action)
+        await state.update_data(editing_movie_id=movie_id)
+        await callback.message.edit_text(
+            "Выберите, что хотите изменить:",
+            reply_markup=get_edit_movie_menu_keyboard(movie_id)
+        )
+
+@router.message(StateFilter("waiting_for_movie_title_edit"))
+async def handle_movie_title_edit(message: Message, state: FSMContext):
+    data = await state.get_data()
+    movie_id = data["editing_movie_id"]
+    
+    movie = db.get_movie(movie_id)
+    if not movie:
+        await message.answer(
+            "Фильм не найден.",
+            reply_markup=get_movies_menu_keyboard()
+        )
+        await state.clear()
+        return
+    
+    if db.update_movie(movie_id, message.text, movie["description"]):
+        await message.answer(
+            "Название фильма успешно обновлено!",
+            reply_markup=get_movies_menu_keyboard()
+        )
+    else:
+        await message.answer(
+            "Произошла ошибка при обновлении названия фильма.",
+            reply_markup=get_movies_menu_keyboard()
+        )
+    await state.clear()
+
+@router.message(StateFilter("waiting_for_movie_description_edit"))
+async def handle_movie_description_edit(message: Message, state: FSMContext):
+    data = await state.get_data()
+    movie_id = data["editing_movie_id"]
+    
+    movie = db.get_movie(movie_id)
+    if not movie:
+        await message.answer(
+            "Фильм не найден.",
+            reply_markup=get_movies_menu_keyboard()
+        )
+        await state.clear()
+        return
+    
+    description = "-" if message.text == "-" else message.text
+    if db.update_movie(movie_id, movie["title"], description):
+        await message.answer(
+            "Описание фильма успешно обновлено!",
+            reply_markup=get_movies_menu_keyboard()
+        )
+    else:
+        await message.answer(
+            "Произошла ошибка при обновлении описания фильма.",
+            reply_markup=get_movies_menu_keyboard()
+        )
+    await state.clear()
+
+@router.callback_query(F.data.startswith("delete_movie:"))
+async def handle_delete_movie(callback: CallbackQuery, state: FSMContext):
+    movie_id = int(callback.data.split(":")[1])
+    
+    await callback.message.edit_text(
+        "Вы уверены, что хотите удалить этот фильм?",
+        reply_markup=get_confirm_keyboard("delete_movie", movie_id)
+    )
+
+@router.callback_query(F.data.startswith("confirm_delete_movie:"))
+async def handle_confirm_delete_movie(callback: CallbackQuery, state: FSMContext):
+    movie_id = int(callback.data.split(":")[1])
+    
+    if db.delete_movie(movie_id):
+        await callback.message.edit_text(
+            "Фильм успешно удалён!",
+            reply_markup=get_movies_menu_keyboard()
+        )
+    else:
+        await callback.message.edit_text(
+            "Произошла ошибка при удалении фильма.",
+            reply_markup=get_movies_menu_keyboard()
+        )
+
+@router.callback_query(F.data.startswith("back_to_movies:"))
+async def handle_back_to_movies(callback: CallbackQuery, state: FSMContext):
+    context = callback.data.split(":")[1]
+    
+    if context == "my_movies":
+        movies = db.get_my_movies(callback.from_user.id)
+        if not movies:
+            await callback.message.edit_text(
+                "У вас пока нет фильмов в списке.",
+                reply_markup=get_movies_menu_keyboard()
+            )
+            return
+            
+        await callback.message.edit_text(
+            "Ваши фильмы:",
+            reply_markup=get_movies_list_keyboard(movies, context="my_movies")
+        )
+    else:
+        movies = db.get_partner_movies(callback.from_user.id)
+        if not movies:
+            await callback.message.edit_text(
+                "У партнёра пока нет фильмов в списке.",
+                reply_markup=get_movies_menu_keyboard()
+            )
+            return
+            
+        await callback.message.edit_text(
+            "Фильмы партнёра:",
+            reply_markup=get_movies_list_keyboard(movies, context="partner_movies")
+        )
+
+@router.callback_query(F.data.startswith("movie_page:"))
+async def handle_movie_page(callback: CallbackQuery, state: FSMContext):
+    page = int(callback.data.split(":")[1])
+    context = "my_movies" if "my_movies" in callback.message.text else "partner_movies"
+    
+    movies = db.get_my_movies(callback.from_user.id) if context == "my_movies" else db.get_partner_movies(callback.from_user.id)
+    
+    await callback.message.edit_text(
+        callback.message.text,
+        reply_markup=get_movies_list_keyboard(movies, page=page, context=context)
+    )
+
+@router.callback_query(lambda c: c.data.startswith('rate_movie:'))
+async def process_rate_movie(callback_query: types.CallbackQuery, state: FSMContext):
+    movie_id = int(callback_query.data.split(':')[1])
+    await callback_query.message.edit_text(
+        "Выберите, насколько вы хотите посмотреть этот фильм:",
+        reply_markup=get_movie_rating_keyboard(movie_id)
+    )
+
+@router.callback_query(lambda c: c.data.startswith('set_rating:'))
+async def process_set_rating(callback_query: types.CallbackQuery, state: FSMContext):
+    _, movie_id, rating = callback_query.data.split(':')
+    movie_id = int(movie_id)
+    rating = int(rating)
+    
+    if db.update_movie_rating(movie_id, rating):
+        movie = db.get_movie(movie_id)
+        await callback_query.message.edit_text(
+            f"Фильм: {movie['title']}\n"
+            f"Описание: {movie['description']}\n"
+            f"Ваша оценка: {'⭐' * rating}",
+            reply_markup=get_movie_action_keyboard(movie_id, "partner_movies")
+        )
+    else:
+        await callback_query.message.edit_text(
+            "Произошла ошибка при сохранении оценки. Попробуйте позже.",
+            reply_markup=get_movie_action_keyboard(movie_id, "partner_movies")
+        )
