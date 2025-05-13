@@ -3,11 +3,13 @@ from typing import List, Optional
 from models import Task, TaskType, TaskStatus, Wish, WishType
 from datetime import datetime
 import json
+import logging
 
 class Database:
     def __init__(self, db_file: str = "couple_tasks.db"):
-        self.connection = sqlite3.connect(db_file)
-        self.cursor = self.connection.cursor()
+        self.db_file = db_file
+        self.conn = sqlite3.connect(db_file)
+        self.cursor = self.conn.cursor()
         self.create_tables()
         
     def create_tables(self):
@@ -50,14 +52,18 @@ class Database:
             movie_type TEXT NOT NULL,
             created_by INTEGER NOT NULL,
             rating INTEGER,
-            created_at TIMESTAMP NOT NULL
+            created_at TIMESTAMP NOT NULL,
+            watched BOOLEAN DEFAULT 0,
+            watch_date TIMESTAMP,
+            review TEXT,
+            FOREIGN KEY (created_by) REFERENCES users(id)
         )
         """)
-        self.connection.commit()
+        self.conn.commit()
         
     def add_user(self, user_id: int, partner_id: int = None):
         self.cursor.execute("INSERT OR REPLACE INTO users VALUES (?, ?)", (user_id, partner_id))
-        self.connection.commit()
+        self.conn.commit()
         
     def get_partner_id(self, user_id: int) -> Optional[int]:
         self.cursor.execute("SELECT partner_id FROM users WHERE user_id = ?", (user_id,))
@@ -69,7 +75,7 @@ class Database:
         INSERT INTO tasks (title, description, task_type, status, created_by, created_at)
         VALUES (?, ?, ?, ?, ?, ?)
         """, (task.title, task.description, task.task_type.value, task.status.value, task.created_by, task.created_at))
-        self.connection.commit()
+        self.conn.commit()
         return self.cursor.lastrowid
         
     def get_tasks(self, user_id: int) -> List[Task]:
@@ -219,12 +225,12 @@ class Database:
         SET title = ?, description = ?, task_type = ?, status = ?
         WHERE id = ?
         """, (task.title, task.description, task.task_type.value, task.status.value, task.id))
-        self.connection.commit()
+        self.conn.commit()
         return self.cursor.rowcount > 0
         
     def delete_task(self, task_id: int) -> bool:
         self.cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
-        self.connection.commit()
+        self.conn.commit()
         return self.cursor.rowcount > 0
 
     def add_wish(self, wish: Wish) -> int:
@@ -232,7 +238,7 @@ class Database:
         INSERT INTO wishes (title, description, image_id, wish_type, created_by, created_at)
         VALUES (?, ?, ?, ?, ?, ?)
         """, (wish.title, wish.description, wish.image_id, wish.wish_type.value, wish.created_by, wish.created_at))
-        self.connection.commit()
+        self.conn.commit()
         return self.cursor.lastrowid
         
     def get_wishes(self, user_id: int) -> List[Wish]:
@@ -337,12 +343,12 @@ class Database:
         SET title = ?, description = ?, image_id = ?, wish_type = ?
         WHERE id = ?
         """, (wish.title, wish.description, wish.image_id, wish.wish_type.value, wish.id))
-        self.connection.commit()
+        self.conn.commit()
         return self.cursor.rowcount > 0
         
     def delete_wish(self, wish_id: int) -> bool:
         self.cursor.execute("DELETE FROM wishes WHERE id = ?", (wish_id,))
-        self.connection.commit()
+        self.conn.commit()
         return self.cursor.rowcount > 0
 
     def get_completed_tasks(self, user_id: int) -> List[Task]:
@@ -388,12 +394,12 @@ class Database:
         INSERT INTO movies (title, description, movie_type, created_by, created_at)
         VALUES (?, ?, ?, ?, ?)
         """, (title, description, movie_type, created_by, datetime.now()))
-        self.connection.commit()
+        self.conn.commit()
         return self.cursor.lastrowid
 
     def get_my_movies(self, user_id: int) -> List[dict]:
         self.cursor.execute("""
-        SELECT id, title, description, movie_type, rating, created_at
+        SELECT id, title, description, movie_type, rating, created_at, watched, watch_date, review
         FROM movies
         WHERE created_by = ? AND movie_type = 'my_movies'
         ORDER BY created_at DESC
@@ -407,7 +413,10 @@ class Database:
                 'description': row[2],
                 'movie_type': row[3],
                 'rating': row[4],
-                'created_at': datetime.fromisoformat(row[5])
+                'created_at': datetime.fromisoformat(row[5]),
+                'watched': bool(row[6]),
+                'watch_date': datetime.fromisoformat(row[7]) if row[7] else None,
+                'review': row[8]
             })
         return movies
 
@@ -417,9 +426,9 @@ class Database:
             return []
             
         self.cursor.execute("""
-        SELECT id, title, description, movie_type, rating, created_at
+        SELECT id, title, description, movie_type, rating, created_at, watched, watch_date, review
         FROM movies
-        WHERE created_by = ? AND movie_type = 'partner_movies'
+        WHERE created_by = ?
         ORDER BY created_at DESC
         """, (partner_id,))
         
@@ -431,7 +440,10 @@ class Database:
                 'description': row[2],
                 'movie_type': row[3],
                 'rating': row[4],
-                'created_at': datetime.fromisoformat(row[5])
+                'created_at': datetime.fromisoformat(row[5]),
+                'watched': bool(row[6]),
+                'watch_date': datetime.fromisoformat(row[7]) if row[7] else None,
+                'review': row[8]
             })
         return movies
 
@@ -463,7 +475,7 @@ class Database:
             SET title = ?, description = ?
             WHERE id = ?
             """, (title, description, movie_id))
-            self.connection.commit()
+            self.conn.commit()
             return True
         except:
             return False
@@ -471,7 +483,7 @@ class Database:
     def delete_movie(self, movie_id: int) -> bool:
         try:
             self.cursor.execute("DELETE FROM movies WHERE id = ?", (movie_id,))
-            self.connection.commit()
+            self.conn.commit()
             return True
         except:
             return False
@@ -483,7 +495,72 @@ class Database:
             SET rating = ?
             WHERE id = ?
             """, (rating, movie_id))
-            self.connection.commit()
+            self.conn.commit()
             return True
         except:
             return False
+
+    def update_movie_watch_status(self, movie_id: int, watched: bool, watch_date: datetime = None, review: str = None) -> bool:
+        try:
+            self.cursor.execute("""
+            UPDATE movies
+            SET watched = ?, watch_date = ?, review = ?
+            WHERE id = ?
+            """, (watched, watch_date.isoformat() if watch_date else None, review, movie_id))
+            self.conn.commit()
+            return True
+        except Exception as e:
+            logging.error(f"Error updating movie watch status: {e}")
+            return False
+
+    def get_movie_stats(self, user_id: int) -> dict:
+        self.cursor.execute("""
+        SELECT 
+            COUNT(*) as total_movies,
+            SUM(CASE WHEN watched = 1 THEN 1 ELSE 0 END) as watched_movies,
+            AVG(CASE WHEN rating IS NOT NULL THEN rating ELSE NULL END) as avg_rating
+        FROM movies
+        WHERE created_by = ?
+        """, (user_id,))
+        
+        row = self.cursor.fetchone()
+        return {
+            'total_movies': row[0],
+            'watched_movies': row[1],
+            'avg_rating': round(row[2], 1) if row[2] is not None else None
+        }
+
+    def get_movie_recommendations(self, user_id: int, limit: int = 5) -> List[dict]:
+        # Получаем средний рейтинг пользователя
+        self.cursor.execute("""
+        SELECT AVG(rating)
+        FROM movies
+        WHERE created_by = ? AND rating IS NOT NULL
+        """, (user_id,))
+        avg_rating = self.cursor.fetchone()[0] or 4  # По умолчанию 4, если нет оценок
+        
+        # Получаем рекомендации на основе оценок партнера
+        partner_id = self.get_partner_id(user_id)
+        if not partner_id:
+            return []
+            
+        self.cursor.execute("""
+        SELECT id, title, description, rating
+        FROM movies
+        WHERE created_by = ? 
+        AND movie_type = 'partner_movies'
+        AND watched = 0
+        AND rating >= ?
+        ORDER BY rating DESC, created_at DESC
+        LIMIT ?
+        """, (partner_id, avg_rating, limit))
+        
+        recommendations = []
+        for row in self.cursor.fetchall():
+            recommendations.append({
+                'id': row[0],
+                'title': row[1],
+                'description': row[2],
+                'rating': row[3]
+            })
+        return recommendations

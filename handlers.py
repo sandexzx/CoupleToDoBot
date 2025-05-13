@@ -6,6 +6,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from models import Task, TaskType, TaskStatus, Wish, WishType, Movie, MovieType
+from datetime import datetime
 
 from config import ADMIN_IDS
 from database import Database
@@ -1478,6 +1479,163 @@ async def handle_movies_menu(callback: CallbackQuery, state: FSMContext):
             "Выберите, в какой список добавить фильм:",
             reply_markup=get_movie_type_keyboard()
         )
+        
+    elif action == "stats":
+        stats = db.get_movie_stats(callback.from_user.id)
+        text = "📊 Статистика фильмов:\n\n"
+        text += f"Всего фильмов: {stats['total_movies']}\n"
+        text += f"Просмотрено: {stats['watched_movies']}\n"
+        if stats['avg_rating']:
+            text += f"Средняя оценка: {'⭐' * round(stats['avg_rating'])}"
+        
+        await callback.message.edit_text(
+            text,
+            reply_markup=get_movies_menu_keyboard()
+        )
+        
+    elif action == "recommendations":
+        recommendations = db.get_movie_recommendations(callback.from_user.id)
+        if not recommendations:
+            await callback.message.edit_text(
+                "К сожалению, сейчас нет рекомендаций для вас.",
+                reply_markup=get_movies_menu_keyboard()
+            )
+            return
+            
+        text = "🎯 Рекомендуемые фильмы:\n\n"
+        for movie in recommendations:
+            text += f"🎬 {movie['title']}\n"
+            if movie['description'] and movie['description'] != "-":
+                text += f"📝 {movie['description']}\n"
+            text += f"⭐ Оценка партнёра: {'⭐' * movie['rating']}\n\n"
+        
+        await callback.message.edit_text(
+            text,
+            reply_markup=get_movies_menu_keyboard()
+        )
+
+@router.callback_query(F.data.startswith("view_movie:"))
+async def handle_view_movie(callback: CallbackQuery, state: FSMContext):
+    movie_id = int(callback.data.split(":")[1])
+    context = callback.data.split(":")[2]
+    
+    movie = db.get_movie(movie_id)
+    if not movie:
+        await callback.message.edit_text(
+            "Фильм не найден.",
+            reply_markup=get_movies_menu_keyboard()
+        )
+        return
+    
+    text = f"🎬 {movie['title']}\n\n"
+    if movie['description'] and movie['description'] != "-":
+        text += f"📝 {movie['description']}\n\n"
+    text += f"📅 Добавлен: {movie['created_at'].strftime('%d.%m.%Y %H:%M')}\n"
+    
+    if movie.get('watched', False):
+        text += f"✅ Просмотрен: {movie['watch_date'].strftime('%d.%m.%Y')}\n"
+        if movie.get('review'):
+            text += f"\n📝 Отзыв:\n{movie['review']}\n"
+    
+    if movie.get('rating'):
+        text += f"\n⭐ Оценка: {'⭐' * movie['rating']}"
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_movie_action_keyboard(movie_id, context, movie.get('watched', False))
+    )
+
+@router.callback_query(F.data.startswith("mark_watched:"))
+async def handle_mark_watched(callback: CallbackQuery, state: FSMContext):
+    movie_id = int(callback.data.split(":")[1])
+    await state.update_data(marking_movie_id=movie_id)
+    
+    await callback.message.edit_text(
+        "Хотите оставить отзыв о фильме? (Отправьте '-' если не хотите):",
+        reply_markup=get_cancel_keyboard()
+    )
+    await state.set_state("waiting_for_movie_review")
+
+@router.message(StateFilter("waiting_for_movie_review"))
+async def handle_movie_review(message: Message, state: FSMContext):
+    data = await state.get_data()
+    movie_id = data["marking_movie_id"]
+    review = "-" if message.text == "-" else message.text
+    
+    movie = db.get_movie(movie_id)
+    if db.update_movie_watch_status(movie_id, True, datetime.now(), review):
+        # Уведомляем партнера о просмотре фильма
+        if movie:
+            partner_id = db.get_partner_id(message.from_user.id)
+            if partner_id:
+                try:
+                    notification = f"🎬 Фильм просмотрен!\n📌 {message.from_user.first_name} посмотрел(а) фильм \"{movie['title']}\""
+                    if review != "-":
+                        notification += f"\n\n📝 Отзыв:\n{review}"
+                    await message.bot.send_message(partner_id, notification)
+                except Exception as e:
+                    logging.error(f"Ошибка при отправке уведомления о просмотре фильма: {e}")
+        
+        await message.answer(
+            "Фильм отмечен как просмотренный!",
+            reply_markup=get_movies_menu_keyboard()
+        )
+    else:
+        await message.answer(
+            "Произошла ошибка при обновлении статуса фильма.",
+            reply_markup=get_movies_menu_keyboard()
+        )
+    await state.clear()
+
+@router.callback_query(F.data.startswith("add_review:"))
+async def handle_add_review(callback: CallbackQuery, state: FSMContext):
+    movie_id = int(callback.data.split(":")[1])
+    await state.update_data(reviewing_movie_id=movie_id)
+    
+    await callback.message.edit_text(
+        "Введите ваш отзыв о фильме:",
+        reply_markup=get_cancel_keyboard()
+    )
+    await state.set_state("waiting_for_movie_review_edit")
+
+@router.message(StateFilter("waiting_for_movie_review_edit"))
+async def handle_movie_review_edit(message: Message, state: FSMContext):
+    data = await state.get_data()
+    movie_id = data["reviewing_movie_id"]
+    
+    movie = db.get_movie(movie_id)
+    if not movie:
+        await message.answer(
+            "Фильм не найден.",
+            reply_markup=get_movies_menu_keyboard()
+        )
+        await state.clear()
+        return
+    
+    if db.update_movie_watch_status(movie_id, movie['watched'], movie['watch_date'], message.text):
+        # Уведомляем партнера о новом отзыве
+        partner_id = db.get_partner_id(message.from_user.id)
+        if partner_id:
+            try:
+                await message.bot.send_message(
+                    partner_id,
+                    f"🎬 Новый отзыв!\n"
+                    f"📌 {message.from_user.first_name} оставил(а) отзыв о фильме \"{movie['title']}\":\n\n"
+                    f"{message.text}"
+                )
+            except Exception as e:
+                logging.error(f"Ошибка при отправке уведомления о новом отзыве: {e}")
+        
+        await message.answer(
+            "Отзыв успешно добавлен!",
+            reply_markup=get_movies_menu_keyboard()
+        )
+    else:
+        await message.answer(
+            "Произошла ошибка при добавлении отзыва.",
+            reply_markup=get_movies_menu_keyboard()
+        )
+    await state.clear()
 
 @router.callback_query(F.data.startswith("movie_type:"))
 async def handle_movie_type(callback: CallbackQuery, state: FSMContext):
@@ -1512,34 +1670,24 @@ async def handle_movie_description(message: Message, state: FSMContext):
         created_by=message.from_user.id
     )
     
+    # Уведомляем партнера о новом фильме
+    partner_id = db.get_partner_id(message.from_user.id)
+    if partner_id:
+        try:
+            movie_type_text = "свой список" if data["movie_type"] == "my_movies" else "ваш список"
+            await message.bot.send_message(
+                partner_id,
+                f"🎬 Новый фильм!\n"
+                f"📌 {message.from_user.first_name} добавил(а) фильм \"{data['movie_title']}\" в {movie_type_text}"
+            )
+        except Exception as e:
+            logging.error(f"Ошибка при отправке уведомления о новом фильме: {e}")
+    
     await message.answer(
         "Фильм успешно добавлен!",
         reply_markup=get_movies_menu_keyboard()
     )
     await state.clear()
-
-@router.callback_query(F.data.startswith("view_movie:"))
-async def handle_view_movie(callback: CallbackQuery, state: FSMContext):
-    movie_id = int(callback.data.split(":")[1])
-    context = callback.data.split(":")[2]
-    
-    movie = db.get_movie(movie_id)
-    if not movie:
-        await callback.message.edit_text(
-            "Фильм не найден.",
-            reply_markup=get_movies_menu_keyboard()
-        )
-        return
-    
-    text = f"🎬 {movie['title']}\n\n"
-    if movie['description'] and movie['description'] != "-":
-        text += f"📝 {movie['description']}\n\n"
-    text += f"📅 Добавлен: {movie['created_at'].strftime('%d.%m.%Y %H:%M')}"
-    
-    await callback.message.edit_text(
-        text,
-        reply_markup=get_movie_action_keyboard(movie_id, context)
-    )
 
 @router.callback_query(F.data.startswith("edit_movie:"))
 async def handle_edit_movie(callback: CallbackQuery, state: FSMContext):
@@ -1582,6 +1730,18 @@ async def handle_movie_title_edit(message: Message, state: FSMContext):
         return
     
     if db.update_movie(movie_id, message.text, movie["description"]):
+        # Уведомляем партнера об изменении названия фильма
+        partner_id = db.get_partner_id(message.from_user.id)
+        if partner_id:
+            try:
+                await message.bot.send_message(
+                    partner_id,
+                    f"🎬 Обновление фильма!\n"
+                    f"📌 {message.from_user.first_name} изменил(а) название фильма на \"{message.text}\""
+                )
+            except Exception as e:
+                logging.error(f"Ошибка при отправке уведомления об изменении названия фильма: {e}")
+        
         await message.answer(
             "Название фильма успешно обновлено!",
             reply_markup=get_movies_menu_keyboard()
@@ -1703,14 +1863,26 @@ async def process_set_rating(callback_query: types.CallbackQuery, state: FSMCont
     
     if db.update_movie_rating(movie_id, rating):
         movie = db.get_movie(movie_id)
+        # Отправляем уведомление партнеру
+        partner_id = db.get_partner_id(callback_query.from_user.id)
+        if partner_id:
+            try:
+                await callback_query.bot.send_message(
+                    partner_id,
+                    f"⭐ Оценка фильма!\n"
+                    f"📌 {callback_query.from_user.first_name} оценил(а) фильм \"{movie['title']}\" на {rating} звезд"
+                )
+            except Exception as e:
+                logging.error(f"Ошибка при отправке уведомления об оценке фильма: {e}")
+        
         await callback_query.message.edit_text(
             f"Фильм: {movie['title']}\n"
             f"Описание: {movie['description']}\n"
             f"Ваша оценка: {'⭐' * rating}",
-            reply_markup=get_movie_action_keyboard(movie_id, "partner_movies")
+            reply_markup=get_movie_action_keyboard(movie_id, "partner_movies", movie.get('watched', False))
         )
     else:
         await callback_query.message.edit_text(
             "Произошла ошибка при сохранении оценки. Попробуйте позже.",
-            reply_markup=get_movie_action_keyboard(movie_id, "partner_movies")
+            reply_markup=get_movie_action_keyboard(movie_id, "partner_movies", movie.get('watched', False))
         )

@@ -191,6 +191,8 @@ def get_movies_menu_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="🎥 Мои фильмы", callback_data="movies:my")
     builder.button(text="🎬 Фильмы партнёра", callback_data="movies:partner")
     builder.button(text="➕ Добавить фильм", callback_data="movies:add")
+    builder.button(text="📊 Статистика", callback_data="movies:stats")
+    builder.button(text="🎯 Рекомендации", callback_data="movies:recommendations")
     builder.button(text="🏠 Главное меню", callback_data="main_menu")
     
     builder.adjust(1)
@@ -206,13 +208,19 @@ def get_movie_type_keyboard() -> InlineKeyboardMarkup:
     builder.adjust(1)
     return builder.as_markup()
 
-def get_movie_action_keyboard(movie_id: int, context: str = "my_movies") -> InlineKeyboardMarkup:
+def get_movie_action_keyboard(movie_id: int, context: str = "my_movies", watched: bool = False) -> InlineKeyboardMarkup:
     # Клавиатура для действий с фильмом
     builder = InlineKeyboardBuilder()
     
     if context == "partner_movies":
-        builder.button(text="⭐ Оценить", callback_data=f"rate_movie:{movie_id}")
+        if not watched:
+            builder.button(text="⭐ Оценить", callback_data=f"rate_movie:{movie_id}")
+            builder.button(text="✅ Отметить как просмотренный", callback_data=f"mark_watched:{movie_id}")
+        else:
+            builder.button(text="📝 Оставить отзыв", callback_data=f"add_review:{movie_id}")
     else:
+        if not watched:
+            builder.button(text="✅ Отметить как просмотренный", callback_data=f"mark_watched:{movie_id}")
         builder.button(text="✏️ Редактировать", callback_data=f"edit_movie:{movie_id}")
         builder.button(text="🗑️ Удалить", callback_data=f"delete_movie:{movie_id}")
     
@@ -243,8 +251,9 @@ def get_movies_list_keyboard(movies, page=0, page_size=5, context="my_movies") -
     for i in range(start, end):
         movie = movies[i]
         title_display = movie['title'][:30] + "..." if len(movie['title']) > 30 else movie['title']
+        watched_status = "✅ " if movie.get('watched', False) else ""
         builder.button(
-            text=f"🎬 {title_display}", 
+            text=f"{watched_status}🎬 {title_display}", 
             callback_data=f"view_movie:{movie['id']}:{context}"
         )
     

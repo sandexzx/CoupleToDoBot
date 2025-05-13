@@ -1,4 +1,9 @@
 import socket
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 def get_ip_address():
     """Получаем текущий IP адрес машины"""
@@ -22,10 +27,10 @@ CURRENT_IP = get_ip_address()
 # Проверяем, где запущен бот
 if CURRENT_IP == PROD_SERVER_IP:
     # Мы на продакшн сервере, используем боевой токен
-    BOT_TOKEN = '8134901429:AAFlKuE-pnR1Cx5hc-qZCKo55cklv0dyseM'
+    BOT_TOKEN = os.getenv('BOT_TOKEN')
 else:
     # Мы на девелоперской машине, используем тестовый токен
-    BOT_TOKEN = '6122819236:AAE-6iJ57CMBsBlJU62gOprmOm_d2ItLIhM'
+    BOT_TOKEN = os.getenv('DEV_BOT_TOKEN')
 
 # Список ID админов бота
-ADMIN_IDS = [165879072, 5237388776]
+ADMIN_IDS = [int(id) for id in os.getenv('ADMIN_IDS', '').split(',') if id]

@@ -26,7 +26,10 @@ class Movie:
                  movie_type: MovieType = MovieType.MY_MOVIES,
                  created_by: int = None,
                  rating: int = None,
-                 created_at: datetime = None):
+                 created_at: datetime = None,
+                 watched: bool = False,
+                 watch_date: datetime = None,
+                 review: str = None):
         self.id = id
         self.title = title
         self.description = description
@@ -34,6 +37,9 @@ class Movie:
         self.created_by = created_by
         self.rating = rating
         self.created_at = created_at or datetime.now()
+        self.watched = watched
+        self.watch_date = watch_date
+        self.review = review
 
 class Wish:
     def __init__(self, 
