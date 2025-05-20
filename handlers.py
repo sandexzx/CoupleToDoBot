@@ -1345,12 +1345,17 @@ async def delete_wish(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("wish_page:"))
 async def handle_wish_page(callback: CallbackQuery, state: FSMContext):
     page = int(callback.data.split(":")[1])
-    context = "my_wishes" if "my_wishes" in callback.message.text else "partner_wishes"
+    
+    # Получаем контекст из состояния
+    data = await state.get_data()
+    context = data.get("wish_context", "my_wishes")
     
     filtered_wishes = db.get_my_wishes(callback.from_user.id) if context == "my_wishes" else db.get_partner_wishes(callback.from_user.id)
     
+    title = "✨ Ваши желания:" if context == "my_wishes" else "🎀 Желания вашего партнёра:"
+    
     await callback.message.edit_text(
-        callback.message.text,
+        title,
         reply_markup=get_wishes_list_keyboard(filtered_wishes, page=page, context=context)
     )
 
